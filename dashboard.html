@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mesh Storage Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-color: #080710;
+            --card-bg: rgba(17, 16, 29, 0.65);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --primary-grad: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+            --glow-green: 0 0 20px rgba(16, 185, 129, 0.4);
+            --glow-red: 0 0 20px rgba(239, 68, 68, 0.4);
+            --glow-purple: 0 0 25px rgba(168, 85, 247, 0.35);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.1) transparent;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: #f3f4f6;
+            min-height: 100vh;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.1) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(236, 72, 153, 0.1) 0%, transparent 40%);
+            background-attachment: fixed;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 5%;
+            border-bottom: 1px solid var(--card-border);
+            backdrop-filter: blur(12px);
+            background: rgba(8, 7, 16, 0.7);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-text {
+            font-family: 'Outfit', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            background: var(--primary-grad);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .node-connector {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 8px 16px;
+            border-radius: 12px;
+            border: 1px solid var(--card-border);
+        }
+
+        .node-connector input {
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-size: 14px;
+            width: 200px;
+            outline: none;
+        }
+
+        .node-connector button {
+            background: var(--primary-grad);
+            border: none;
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.3s ease;
+        }
+
+        .node-connector button:hover {
+            box-shadow: var(--glow-purple);
+            transform: translateY(-1px);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 40px auto;
+            padding: 0 24px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+        }
+
+        @media (max-width: 1024px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 24px;
+            padding: 32px;
+            backdrop-filter: blur(16px);
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--primary-grad);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .card:hover::before {
+            opacity: 1;
+        }
+
+        .card-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #fff;
+        }
+
+        .card-title i {
+            color: #a855f7;
+        }
+
+        /* Status Widget */
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            font-size: 14px;
+            text-transform: uppercase;
+            padding: 6px 14px;
+            border-radius: 50px;
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            transition: all 0.3s ease;
+        }
+
+        .status-badge.online {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+            box-shadow: var(--glow-green);
+        }
+
+        .status-badge .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            display: inline-block;
+        }
+
+        .status-badge.online .dot {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.3); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.6; }
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .info-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 16px;
+            padding: 16px;
+        }
+
+        .info-label {
+            font-size: 12px;
+            color: #9ca3af;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .info-value {
+            font-size: 15px;
+            font-weight: 500;
+            word-break: break-all;
+            color: #fff;
+        }
+
+        /* Storage Progress */
+        .storage-progress-container {
+            margin-top: 16px;
+        }
+
+        .storage-progress-bar {
+            width: 100%;
+            height: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 50px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+
+        .storage-progress-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--primary-grad);
+            border-radius: 50px;
+            transition: width 0.8s ease;
+        }
+
+        /* Lists */
+        .list-container {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            background: rgba(0,0,0,0.2);
+            padding: 8px;
+        }
+
+        .list-item {
+            font-size: 13px;
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #d1d5db;
+        }
+
+        .list-item:last-child {
+            border-bottom: none;
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #d1d5db;
+            margin-bottom: 8px;
+        }
+
+        input[type="text"], input[type="number"], input[type="password"], select, input[type="file"] {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 12px;
+            outline: none;
+            font-size: 14px;
+            transition: border-color 0.3s, background 0.3s;
+        }
+
+        input:focus, select:focus {
+            border-color: #a855f7;
+            background: rgba(255, 255, 255, 0.07);
+        }
+
+        .submit-btn {
+            width: 100%;
+            background: var(--primary-grad);
+            color: #fff;
+            border: none;
+            padding: 14px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .submit-btn:hover {
+            box-shadow: var(--glow-purple);
+            transform: translateY(-1px);
+        }
+
+        .submit-btn:disabled {
+            background: rgba(255, 255, 255, 0.1);
+            color: rgba(255,255,255,0.3);
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+
+        /* Toast notifications */
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .toast {
+            background: rgba(17, 16, 29, 0.95);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 16px 24px;
+            border-radius: 16px;
+            color: #fff;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            animation: slideIn 0.3s ease forwards;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .toast.success { border-left: 4px solid #10b981; }
+        .toast.error { border-left: 4px solid #ef4444; }
+
+        /* Loader */
+        .spinner {
+            animation: rotate 2s linear infinite;
+            width: 20px;
+            height: 20px;
+        }
+        @keyframes rotate {
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-section">
+            <i data-lucide="shield-alert" style="color: #a855f7; width: 30px; height: 30px;"></i>
+            <span class="logo-text">MESH STORAGE MONITOR</span>
+        </div>
+        <div class="node-connector">
+            <i data-lucide="network" style="color: #9ca3af; width: 18px;"></i>
+            <input type="text" id="node-url" value="http://localhost:3000" placeholder="Node API URL">
+            <button onclick="updateNodeUrl()">Connect</button>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Node status & stats -->
+        <div class="card">
+            <div class="status-header">
+                <div class="card-title">
+                    <i data-lucide="cpu"></i>
+                    <span>Node Status</span>
+                </div>
+                <div id="status-badge" class="status-badge">
+                    <span class="dot"></span>
+                    <span id="status-text">OFFLINE</span>
+                </div>
+            </div>
+
+            <div class="info-grid">
+                <div class="info-item" style="grid-column: span 2;">
+                    <div class="info-label">Peer ID</div>
+                    <div id="peer-id" class="info-value">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Listen Address</div>
+                    <div id="listen-addr" class="info-value">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Storage Usage</div>
+                    <div id="storage-value" class="info-value">0 GB / 0 GB</div>
+                    <div class="storage-progress-container">
+                        <div class="storage-progress-bar">
+                            <div id="storage-progress-fill" class="storage-progress-fill"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card-title" style="margin-top: 32px; font-size: 16px;">
+                <i data-lucide="users" style="width: 18px;"></i>
+                <span>Connected & Trusted Peers</span>
+            </div>
+            <div class="list-container" id="peers-list">
+                <div class="list-item" style="justify-content: center; color: #6b7280;">No peers connected.</div>
+            </div>
+
+            <div class="card-title" style="margin-top: 32px; font-size: 16px;">
+                <i data-lucide="database" style="width: 18px;"></i>
+                <span>Locally Stored Shards</span>
+            </div>
+            <div class="list-container" id="shards-list">
+                <div class="list-item" style="justify-content: center; color: #6b7280;">No shards stored.</div>
+            </div>
+        </div>
+
+        <!-- Operations (Pair, Upload, Download) -->
+        <div style="display: flex; flex-direction: column; gap: 32px;">
+            <!-- Pairing Widget -->
+            <div class="card">
+                <div class="card-title">
+                    <i data-lucide="user-plus"></i>
+                    <span>Register / Pair Peer</span>
+                </div>
+                <form id="pair-form" onsubmit="pairPeer(event)">
+                    <div class="form-group">
+                        <label for="peer-multiaddr">Peer Multiaddress</label>
+                        <input type="text" id="peer-multiaddr" required placeholder="/ip4/192.168.1.15/tcp/4001/p2p/12D3KooW...">
+                    </div>
+                    <button type="submit" class="submit-btn" id="pair-btn">
+                        <i data-lucide="plus-circle" style="width: 18px;"></i>
+                        <span>Send Pairing Exchange</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Upload Widget -->
+            <div class="card">
+                <div class="card-title">
+                    <i data-lucide="upload-cloud"></i>
+                    <span>Upload & Distribute File</span>
+                </div>
+                <form id="upload-form" onsubmit="uploadFile(event)">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="upload-id">File ID (Name)</label>
+                            <input type="text" id="upload-id" required placeholder="my-secure-doc">
+                        </div>
+                        <div class="form-group">
+                            <label for="upload-pass">Passphrase</label>
+                            <input type="password" id="upload-pass" required placeholder="Master password">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="upload-salt">Salt key</label>
+                            <input type="text" id="upload-salt" required value="testsalt">
+                        </div>
+                        <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div>
+                                <label for="upload-k">Data (k)</label>
+                                <input type="number" id="upload-k" required value="1" min="1">
+                            </div>
+                            <div>
+                                <label for="upload-m">Parity (m)</label>
+                                <input type="number" id="upload-m" required value="1" min="1">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="upload-file">Select File</label>
+                        <input type="file" id="upload-file" required>
+                    </div>
+                    <button type="submit" class="submit-btn" id="upload-btn">
+                        <i data-lucide="arrow-up-circle" style="width: 18px;"></i>
+                        <span>Start Encryption & Upload</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Download Widget -->
+            <div class="card">
+                <div class="card-title">
+                    <i data-lucide="download-cloud"></i>
+                    <span>Download & Reconstruct File</span>
+                </div>
+                <form id="download-form" onsubmit="downloadFile(event)">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="download-id">File ID (Name)</label>
+                            <input type="text" id="download-id" required placeholder="my-secure-doc">
+                        </div>
+                        <div class="form-group">
+                            <label for="download-pass">Passphrase</label>
+                            <input type="password" id="download-pass" required placeholder="Master password">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="download-salt">Salt key</label>
+                            <input type="text" id="download-salt" required value="testsalt">
+                        </div>
+                        <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div>
+                                <label for="download-k">Data (k)</label>
+                                <input type="number" id="download-k" required value="1" min="1">
+                            </div>
+                            <div>
+                                <label for="download-m">Parity (m)</label>
+                                <input type="number" id="download-m" required value="1" min="1">
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" class="submit-btn" id="download-btn">
+                        <i data-lucide="arrow-down-circle" style="width: 18px;"></i>
+                        <span>Download & Reconstruct</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+        let nodeUrl = "http://localhost:3000";
+        let isNodeOnline = false;
+
+        // Initialize icons
+        lucide.createIcons();
+
+        // Update URL from input
+        function updateNodeUrl() {
+            nodeUrl = document.getElementById("node-url").value.trim().replace(/\/$/, "");
+            showToast("Connecting to " + nodeUrl, "success");
+            checkNodeStatus();
+        }
+
+        // Display toast
+        function showToast(message, type = "success") {
+            const container = document.getElementById("toast-container");
+            const toast = document.createElement("div");
+            toast.className = `toast ${type}`;
+            
+            let iconName = type === "success" ? "check-circle" : "x-circle";
+            toast.innerHTML = `<i data-lucide="${iconName}" style="width: 18px; color: ${type === 'success' ? '#10b981' : '#ef4444'}"></i><span>${message}</span>`;
+            container.appendChild(toast);
+            
+            lucide.createIcons({nodeList: [toast]});
+
+            setTimeout(() => {
+                toast.style.animation = "slideIn 0.3s reverse forwards";
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
+        // Format bytes
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Check node status
+        async function checkNodeStatus() {
+            const badge = document.getElementById("status-badge");
+            const statusText = document.getElementById("status-text");
+
+            try {
+                const response = await fetch(`${nodeUrl}/status`);
+                if (!response.ok) throw new Error();
+                const status = await response.json();
+
+                isNodeOnline = true;
+                badge.className = "status-badge online";
+                statusText.innerText = "ONLINE";
+
+                document.getElementById("peer-id").innerText = status.peer_id;
+                document.getElementById("listen-addr").innerText = status.listen_addresses[0] || 'No listen addresses';
+                document.getElementById("storage-value").innerText = `${formatBytes(status.storage_used)} / ${formatBytes(status.storage_quota)}`;
+                
+                const percent = (status.storage_used / status.storage_quota) * 100;
+                document.getElementById("storage-progress-fill").style.width = `${percent}%`;
+
+                // Update peers list
+                const peersContainer = document.getElementById("peers-list");
+                if (status.peers.length === 0) {
+                    peersContainer.innerHTML = `<div class="list-item" style="justify-content: center; color: #6b7280;">No active peers.</div>`;
+                } else {
+                    peersContainer.innerHTML = status.peers.map(p => `
+                        <div class="list-item">
+                            <span style="font-family: monospace;">${p}</span>
+                            <span class="status-badge online" style="padding: 2px 8px; font-size: 10px;"><span class="dot"></span>active</span>
+                        </div>
+                    `).join("");
+                }
+
+                // Update shards list
+                const shardsContainer = document.getElementById("shards-list");
+                if (status.shards.length === 0) {
+                    shardsContainer.innerHTML = `<div class="list-item" style="justify-content: center; color: #6b7280;">No local shards.</div>`;
+                } else {
+                    shardsContainer.innerHTML = status.shards.map(s => `
+                        <div class="list-item">
+                            <span style="font-family: monospace; font-size: 12px;">${s.substring(0, 32)}...</span>
+                        </div>
+                    `).join("");
+                }
+
+                // Enable forms
+                document.getElementById("pair-btn").disabled = false;
+                document.getElementById("upload-btn").disabled = false;
+                document.getElementById("download-btn").disabled = false;
+
+            } catch (error) {
+                isNodeOnline = false;
+                badge.className = "status-badge";
+                statusText.innerText = "OFFLINE";
+                document.getElementById("peer-id").innerText = "-";
+                document.getElementById("listen-addr").innerText = "-";
+                document.getElementById("storage-value").innerText = "0 GB / 0 GB";
+                document.getElementById("storage-progress-fill").style.width = "0%";
+                
+                document.getElementById("peers-list").innerHTML = `<div class="list-item" style="justify-content: center; color: #6b7280;">Node offline.</div>`;
+                document.getElementById("shards-list").innerHTML = `<div class="list-item" style="justify-content: center; color: #6b7280;">Node offline.</div>`;
+
+                // Disable forms
+                document.getElementById("pair-btn").disabled = true;
+                document.getElementById("upload-btn").disabled = true;
+                document.getElementById("download-btn").disabled = true;
+            }
+        }
+
+        // Pair peer action
+        async function pairPeer(event) {
+            event.preventDefault();
+            const input = document.getElementById("peer-multiaddr");
+            const btn = document.getElementById("pair-btn");
+            const originalHtml = btn.innerHTML;
+
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray="1, 200" stroke-dashoffset="0"/></svg><span>Pairing...</span>`;
+
+            try {
+                const response = await fetch(`${nodeUrl}/pair`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ multiaddr: input.value.trim() })
+                });
+
+                if (response.ok) {
+                    showToast("Successfully paired with peer!", "success");
+                    input.value = "";
+                    checkNodeStatus();
+                } else {
+                    const text = await response.text();
+                    showToast("Pairing failed: " + text, "error");
+                }
+            } catch (e) {
+                showToast("Network error during pairing", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        // Upload file action
+        async function uploadFile(event) {
+            event.preventDefault();
+            const btn = document.getElementById("upload-btn");
+            const originalHtml = btn.innerHTML;
+
+            const fileId = document.getElementById("upload-id").value.trim();
+            const passphrase = document.getElementById("upload-pass").value;
+            const salt = document.getElementById("upload-salt").value;
+            const k = document.getElementById("upload-k").value;
+            const m = document.getElementById("upload-m").value;
+            const fileInput = document.getElementById("upload-file");
+
+            if (fileInput.files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append("file_id", fileId);
+            formData.append("passphrase", passphrase);
+            formData.append("salt", salt);
+            formData.append("k", k);
+            formData.append("m", m);
+            formData.append("file", fileInput.files[0]);
+
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray="1, 200" stroke-dashoffset="0"/></svg><span>Encrypting & Distributing...</span>`;
+
+            try {
+                const response = await fetch(`${nodeUrl}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const manifest = await response.json();
+                    showToast("File uploaded and distributed successfully!", "success");
+                    console.log("Upload Manifest:", manifest);
+                    document.getElementById("upload-form").reset();
+                    document.getElementById("upload-salt").value = "testsalt";
+                    document.getElementById("upload-k").value = "1";
+                    document.getElementById("upload-m").value = "1";
+                    checkNodeStatus();
+                } else {
+                    const err = await response.text();
+                    showToast("Upload failed: " + err, "error");
+                }
+            } catch (e) {
+                showToast("Network error during upload", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        // Download file action
+        async function downloadFile(event) {
+            event.preventDefault();
+            const btn = document.getElementById("download-btn");
+            const originalHtml = btn.innerHTML;
+
+            const fileId = document.getElementById("download-id").value.trim();
+            const passphrase = document.getElementById("download-pass").value;
+            const salt = document.getElementById("download-salt").value;
+            const k = document.getElementById("download-k").value;
+            const m = document.getElementById("download-m").value;
+
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray="1, 200" stroke-dashoffset="0"/></svg><span>Reconstructing...</span>`;
+
+            try {
+                const queryParams = new URLSearchParams({ passphrase, salt, k, m }).toString();
+                const response = await fetch(`${nodeUrl}/download/${fileId}?${queryParams}`);
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = fileId; // Let browser resolve extension or save as name
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                    showToast("File successfully reconstructed and downloaded!", "success");
+                } else {
+                    const err = await response.text();
+                    showToast("Download failed: " + err, "error");
+                }
+            } catch (e) {
+                showToast("Network error during download", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        // Start status checker
+        checkNodeStatus();
+        setInterval(checkNodeStatus, 3000);
+    </script>
+</body>
+</html>

@@ -15,7 +15,7 @@ use crate::merkle::{Hash256, compute_chunk_hash, compute_root_hash, hash_data, v
 pub use invitation::{Invitation, InvitationError};
 pub use quota::{
     AndroidDeviceState, AndroidNetworkPolicy, AndroidPolicyDecision, AndroidPowerPolicy,
-    QuotaError, QuotaPolicy, QuotaTracker, evaluate_android_policy,
+    BandwidthLimiter, QuotaError, QuotaPolicy, QuotaTracker, evaluate_android_policy,
 };
 use serde::{Deserialize, Serialize};
 

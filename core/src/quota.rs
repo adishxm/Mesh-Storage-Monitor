@@ -181,6 +181,57 @@ pub fn evaluate_android_policy(
     }
 }
 
+/// Token bucket bandwidth rate limiter protecting nodes and relay hops against unbounded egress traffic.
+#[derive(Debug, Clone)]
+pub struct BandwidthLimiter {
+    pub max_rate_bytes_per_sec: u64,
+    pub burst_capacity_bytes: u64,
+    pub available_tokens: f64,
+    pub last_refill_instant: std::time::Instant,
+}
+
+impl BandwidthLimiter {
+    pub fn new(max_rate_bytes_per_sec: u64, burst_capacity_bytes: u64) -> Self {
+        Self {
+            max_rate_bytes_per_sec,
+            burst_capacity_bytes,
+            available_tokens: burst_capacity_bytes as f64,
+            last_refill_instant: std::time::Instant::now(),
+        }
+    }
+
+    pub fn refill(&mut self) {
+        let now = std::time::Instant::now();
+        let elapsed_secs = now.duration_since(self.last_refill_instant).as_secs_f64();
+        let tokens_to_add = elapsed_secs * (self.max_rate_bytes_per_sec as f64);
+        self.available_tokens =
+            (self.available_tokens + tokens_to_add).min(self.burst_capacity_bytes as f64);
+        self.last_refill_instant = now;
+    }
+
+    pub fn try_acquire(&mut self, bytes: u64) -> bool {
+        self.refill();
+        if self.available_tokens >= bytes as f64 {
+            self.available_tokens -= bytes as f64;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn acquire_or_wait_duration(&mut self, bytes: u64) -> Option<std::time::Duration> {
+        self.refill();
+        if self.available_tokens >= bytes as f64 {
+            self.available_tokens -= bytes as f64;
+            None
+        } else {
+            let deficit = (bytes as f64) - self.available_tokens;
+            let wait_secs = deficit / (self.max_rate_bytes_per_sec as f64);
+            Some(std::time::Duration::from_secs_f64(wait_secs))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +386,40 @@ mod tests {
         assert!(decision_under.allowed_to_operate);
         // Clamped to 1% of 100GB = 1 GB
         assert_eq!(decision_under.effective_quota_bytes, 1_000_000_000);
+    }
+
+    #[test]
+    fn test_bandwidth_limiter_burst_and_exhaustion() {
+        // 1000 bytes/sec with 2000 byte burst capacity
+        let mut limiter = BandwidthLimiter::new(1000, 2000);
+
+        // Can acquire burst size
+        assert!(limiter.try_acquire(1500));
+        assert!(limiter.try_acquire(500));
+
+        // Now empty; immediate acquisition should fail
+        assert!(!limiter.try_acquire(100));
+
+        // Check wait duration calculation
+        let wait_opt = limiter.acquire_or_wait_duration(500);
+        assert!(wait_opt.is_some());
+        let wait = wait_opt.unwrap();
+        // 500 bytes deficit / 1000 bytes/sec = ~0.5s
+        assert!((wait.as_secs_f64() - 0.5).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_bandwidth_limiter_refill() {
+        let mut limiter = BandwidthLimiter::new(5000, 10_000);
+        assert!(limiter.try_acquire(10_000));
+        assert!(!limiter.try_acquire(1));
+
+        // Artificially move last_refill_instant backwards by 1 second
+        limiter.last_refill_instant -= std::time::Duration::from_secs(1);
+        limiter.refill();
+
+        // Must have refilled ~5000 bytes
+        assert!(limiter.available_tokens >= 4900.0);
+        assert!(limiter.try_acquire(4000));
     }
 }

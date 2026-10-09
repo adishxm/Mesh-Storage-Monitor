@@ -5,13 +5,14 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::network::Command;
-use crate::state::{NodeState, NodeStatus};
+use crate::state::{NodeLifecycleState, NodeState, NodeStatus};
+use mesh_core::FileManifest;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -32,6 +33,26 @@ pub struct PairRequest {
     pub multiaddr: String,
 }
 
+#[derive(Deserialize)]
+pub struct QuotaUpdateRequest {
+    pub quota_bytes: Option<u64>,
+    pub quota_gb: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub struct QuotaResponse {
+    pub storage_used: u64,
+    pub storage_quota: u64,
+    pub usage_ratio: f64,
+    pub remaining_bytes: u64,
+}
+
+#[derive(Serialize)]
+pub struct LifecycleResponse {
+    pub state: NodeLifecycleState,
+    pub message: String,
+}
+
 pub fn make_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -39,6 +60,19 @@ pub fn make_router(state: AppState) -> Router {
         .allow_headers(Any);
 
     Router::new()
+        // API v1 Canonical Endpoints
+        .route("/api/v1/status", get(get_status))
+        .route("/api/v1/peers", get(get_peers))
+        .route("/api/v1/shards", get(get_shards))
+        .route("/api/v1/manifests", get(get_manifests))
+        .route("/api/v1/quota", get(get_quota).post(set_quota))
+        .route("/api/v1/pause", post(pause_node))
+        .route("/api/v1/resume", post(resume_node))
+        .route("/api/v1/leave", post(leave_node))
+        .route("/api/v1/pair", post(pair_peer))
+        .route("/api/v1/upload", post(upload_file))
+        .route("/api/v1/download/:file_id", get(download_file))
+        // Backward-compatibility aliases for local prototypes & dashboards
         .route("/status", get(get_status))
         .route("/peers", get(get_peers))
         .route("/shards", get(get_shards))
@@ -62,6 +96,85 @@ async fn get_peers(State(state): State<AppState>) -> Json<Vec<String>> {
 async fn get_shards(State(state): State<AppState>) -> Json<Vec<String>> {
     let node_state = state.node_state.read().await;
     Json(node_state.get_status().shards)
+}
+
+async fn get_manifests(State(state): State<AppState>) -> Json<Vec<FileManifest>> {
+    let node_state = state.node_state.read().await;
+    Json(node_state.list_manifests())
+}
+
+async fn get_quota(State(state): State<AppState>) -> Json<QuotaResponse> {
+    let node_state = state.node_state.read().await;
+    Json(QuotaResponse {
+        storage_used: node_state.storage_used,
+        storage_quota: node_state.storage_quota,
+        usage_ratio: node_state.quota_tracker.usage_ratio(),
+        remaining_bytes: node_state.quota_tracker.remaining_bytes(),
+    })
+}
+
+async fn set_quota(
+    State(state): State<AppState>,
+    Json(payload): Json<QuotaUpdateRequest>,
+) -> Result<Json<QuotaResponse>, (StatusCode, String)> {
+    let mut node_state = state.node_state.write().await;
+    let new_quota = if let Some(bytes) = payload.quota_bytes {
+        bytes
+    } else if let Some(gb) = payload.quota_gb {
+        (gb * 1024.0 * 1024.0 * 1024.0).round() as u64
+    } else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "quota_bytes or quota_gb must be specified".to_string(),
+        ));
+    };
+
+    node_state.set_quota(new_quota);
+    Ok(Json(QuotaResponse {
+        storage_used: node_state.storage_used,
+        storage_quota: node_state.storage_quota,
+        usage_ratio: node_state.quota_tracker.usage_ratio(),
+        remaining_bytes: node_state.quota_tracker.remaining_bytes(),
+    }))
+}
+
+async fn pause_node(
+    State(state): State<AppState>,
+) -> Result<Json<LifecycleResponse>, (StatusCode, String)> {
+    let mut node_state = state.node_state.write().await;
+    node_state
+        .pause()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(LifecycleResponse {
+        state: node_state.state,
+        message: "Node paused successfully".to_string(),
+    }))
+}
+
+async fn resume_node(
+    State(state): State<AppState>,
+) -> Result<Json<LifecycleResponse>, (StatusCode, String)> {
+    let mut node_state = state.node_state.write().await;
+    node_state
+        .resume()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(LifecycleResponse {
+        state: node_state.state,
+        message: "Node resumed successfully".to_string(),
+    }))
+}
+
+async fn leave_node(
+    State(state): State<AppState>,
+) -> Result<Json<LifecycleResponse>, (StatusCode, String)> {
+    let mut node_state = state.node_state.write().await;
+    node_state
+        .leave()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(LifecycleResponse {
+        state: node_state.state,
+        message: "Node departure initiated. Shard repair handoff started.".to_string(),
+    }))
 }
 
 async fn pair_peer(

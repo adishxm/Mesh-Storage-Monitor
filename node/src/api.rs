@@ -1,17 +1,17 @@
 use axum::{
-    extract::{Path, Query, State, Multipart},
+    Json, Router,
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
-use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, RwLock};
 use serde::Deserialize;
+use std::sync::Arc;
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::state::{NodeState, NodeStatus};
 use crate::network::Command;
+use crate::state::{NodeState, NodeStatus};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -69,12 +69,17 @@ async fn pair_peer(
     Json(payload): Json<PairRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let (tx, rx) = oneshot::channel();
-    state.network_tx.send(Command::Pair {
-        multiaddr: payload.multiaddr,
-        response: tx,
-    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state
+        .network_tx
+        .send(Command::Pair {
+            multiaddr: payload.multiaddr,
+            response: tx,
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    rx.await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    rx.await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     Ok(StatusCode::OK)
@@ -91,40 +96,74 @@ async fn upload_file(
     let mut m = None;
     let mut data = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
+    {
         let name = field.name().unwrap_or_default().to_string();
         match name.as_str() {
             "file_id" => file_id = Some(field.text().await.unwrap_or_default()),
             "passphrase" => passphrase = Some(field.text().await.unwrap_or_default()),
             "salt" => salt = Some(field.text().await.unwrap_or_default()),
-            "k" => k = Some(field.text().await.unwrap_or_default().parse::<usize>().unwrap_or(2)),
-            "m" => m = Some(field.text().await.unwrap_or_default().parse::<usize>().unwrap_or(1)),
+            "k" => {
+                k = Some(
+                    field
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                        .parse::<usize>()
+                        .unwrap_or(2),
+                )
+            }
+            "m" => {
+                m = Some(
+                    field
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                        .parse::<usize>()
+                        .unwrap_or(1),
+                )
+            }
             "file" => {
-                data = Some(field.bytes().await.map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?);
+                data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?,
+                );
             }
             _ => {}
         }
     }
 
     let file_id = file_id.ok_or((StatusCode::BAD_REQUEST, "file_id required".to_string()))?;
-    let passphrase = passphrase.ok_or((StatusCode::BAD_REQUEST, "passphrase required".to_string()))?;
+    let passphrase =
+        passphrase.ok_or((StatusCode::BAD_REQUEST, "passphrase required".to_string()))?;
     let salt = salt.ok_or((StatusCode::BAD_REQUEST, "salt required".to_string()))?;
     let k = k.ok_or((StatusCode::BAD_REQUEST, "k required".to_string()))?;
     let m = m.ok_or((StatusCode::BAD_REQUEST, "m required".to_string()))?;
     let data = data.ok_or((StatusCode::BAD_REQUEST, "file data required".to_string()))?;
 
     let (tx, rx) = oneshot::channel();
-    state.network_tx.send(Command::Upload {
-        file_id,
-        data: data.to_vec(),
-        passphrase: passphrase.into_bytes(),
-        salt: salt.into_bytes(),
-        k,
-        m,
-        response: tx,
-    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state
+        .network_tx
+        .send(Command::Upload {
+            file_id,
+            data: data.to_vec(),
+            passphrase: passphrase.into_bytes(),
+            salt: salt.into_bytes(),
+            k,
+            m,
+            response: tx,
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let manifest = rx.await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    let manifest = rx
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(manifest))
@@ -136,16 +175,22 @@ async fn download_file(
     Query(query): Query<DownloadQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let (tx, rx) = oneshot::channel();
-    state.network_tx.send(Command::Download {
-        file_id,
-        passphrase: query.passphrase.into_bytes(),
-        salt: query.salt.into_bytes(),
-        k: query.k,
-        m: query.m,
-        response: tx,
-    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    state
+        .network_tx
+        .send(Command::Download {
+            file_id,
+            passphrase: query.passphrase.into_bytes(),
+            salt: query.salt.into_bytes(),
+            k: query.k,
+            m: query.m,
+            response: tx,
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let file_data = rx.await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    let file_data = rx
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
 
     Ok(file_data)

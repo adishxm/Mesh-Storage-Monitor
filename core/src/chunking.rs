@@ -4,9 +4,9 @@ use fastcdc::v2020::FastCDC;
 /// Returns a list of chunks, where each chunk is a `Vec<u8>`.
 pub fn chunk_data(data: &[u8]) -> Vec<Vec<u8>> {
     // Parameters for ~2MB average chunk size
-    let min_size = 524_288;     // 512 KB
-    let avg_size = 2_097_152;   // 2 MB
-    let max_size = 8_388_608;   // 8 MB
+    let min_size = 524_288; // 512 KB
+    let avg_size = 2_097_152; // 2 MB
+    let max_size = 8_388_608; // 8 MB
 
     let chunker = FastCDC::new(data, min_size, avg_size, max_size);
     let mut chunks = Vec::new();

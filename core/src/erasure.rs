@@ -22,7 +22,7 @@ pub fn encode_data(data: &[u8], k: usize, m: usize) -> Result<Vec<Vec<u8>>, Eras
 
     // Calculate shard size: round up chunk size divided by k
     let data_len = data.len();
-    let shard_size = (data_len + k - 1) / k;
+    let shard_size = data_len.div_ceil(k);
     let padded_len = shard_size * k;
 
     // Create a padded buffer
@@ -74,8 +74,8 @@ pub fn reconstruct_data(
 
     // Gather reconstructed data shards (first k shards)
     let mut reconstructed_data = Vec::new();
-    for i in 0..k {
-        let shard = mutable_shards[i]
+    for shard in mutable_shards.iter().take(k) {
+        let shard = shard
             .as_ref()
             .ok_or(reed_solomon_erasure::Error::TooFewShards)?;
         reconstructed_data.extend_from_slice(shard);

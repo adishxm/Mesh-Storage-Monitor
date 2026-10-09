@@ -1,24 +1,24 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, StreamExt};
 use libp2p::{
-    gossipsub, identify, kad, mdns, noise, ping,
+    Multiaddr, PeerId, Swarm, gossipsub, identify, kad, mdns, noise, ping,
     request_response::{self, Codec, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, Swarm,
+    tcp, yamux,
 };
-use serde::{Serialize, Deserialize};
-use tokio::sync::{mpsc, oneshot, RwLock};
-use tracing::{info, warn, error};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{RwLock, mpsc, oneshot};
+use tracing::{error, info, warn};
 
-use mesh_core::{
-    encode_file, decode_file, FileManifest,
-    merkle::{hash_data, Hash256},
-};
 use crate::state::NodeState;
+use mesh_core::{
+    FileManifest, decode_file, encode_file,
+    merkle::{Hash256, hash_data},
+};
 
 // Custom Request/Response protocol for shard transfer and audits
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -44,18 +44,10 @@ pub enum ShardRequest {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ShardResponse {
-    StoreAck {
-        success: bool,
-    },
-    RetrieveAck {
-        data: Option<Vec<u8>>,
-    },
-    AuditResponse {
-        hash: Hash256,
-    },
-    PairAck {
-        success: bool,
-    },
+    StoreAck { success: bool },
+    RetrieveAck { data: Option<Vec<u8>> },
+    AuditResponse { hash: Hash256 },
+    PairAck { success: bool },
     Error(String),
 }
 
@@ -68,25 +60,40 @@ impl Codec for JsonCodec {
     type Request = ShardRequest;
     type Response = ShardResponse;
 
-    async fn read_request<T>(&mut self, _protocol: &&'static str, io: &mut T) -> std::io::Result<ShardRequest>
+    async fn read_request<T>(
+        &mut self,
+        _protocol: &&'static str,
+        io: &mut T,
+    ) -> std::io::Result<ShardRequest>
     where
         T: AsyncRead + Unpin + Send,
     {
         let mut vec = Vec::new();
         futures::io::copy(io, &mut vec).await?;
-        serde_json::from_slice(&vec).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        serde_json::from_slice(&vec)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
-    async fn read_response<T>(&mut self, _protocol: &&'static str, io: &mut T) -> std::io::Result<ShardResponse>
+    async fn read_response<T>(
+        &mut self,
+        _protocol: &&'static str,
+        io: &mut T,
+    ) -> std::io::Result<ShardResponse>
     where
         T: AsyncRead + Unpin + Send,
     {
         let mut vec = Vec::new();
         futures::io::copy(io, &mut vec).await?;
-        serde_json::from_slice(&vec).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        serde_json::from_slice(&vec)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
-    async fn write_request<T>(&mut self, _protocol: &&'static str, io: &mut T, req: ShardRequest) -> std::io::Result<()>
+    async fn write_request<T>(
+        &mut self,
+        _protocol: &&'static str,
+        io: &mut T,
+        req: ShardRequest,
+    ) -> std::io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
@@ -96,7 +103,12 @@ impl Codec for JsonCodec {
         Ok(())
     }
 
-    async fn write_response<T>(&mut self, _protocol: &&'static str, io: &mut T, res: ShardResponse) -> std::io::Result<()>
+    async fn write_response<T>(
+        &mut self,
+        _protocol: &&'static str,
+        io: &mut T,
+        res: ShardResponse,
+    ) -> std::io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
@@ -219,7 +231,7 @@ fn block_ip_firewall(ip: &str) {
         info!("Triggering Windows Firewall block for IP: {}", ip);
         let rule_name = format!("MeshStorage Block {}", ip);
         let output = std::process::Command::new("netsh")
-            .args(&[
+            .args([
                 "advfirewall",
                 "firewall",
                 "add",
@@ -234,10 +246,16 @@ fn block_ip_firewall(ip: &str) {
         match output {
             Ok(out) => {
                 if out.status.success() {
-                    info!("Successfully added Windows Firewall block rule for IP: {}", ip);
+                    info!(
+                        "Successfully added Windows Firewall block rule for IP: {}",
+                        ip
+                    );
                 } else {
                     let err_msg = String::from_utf8_lossy(&out.stderr);
-                    warn!("Windows Firewall netsh execution failed (likely requires admin): {}", err_msg);
+                    warn!(
+                        "Windows Firewall netsh execution failed (likely requires admin): {}",
+                        err_msg
+                    );
                 }
             }
             Err(e) => {
@@ -248,7 +266,10 @@ fn block_ip_firewall(ip: &str) {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        info!("Triggering Linux iptables block for IP: {} (requires root)", ip);
+        info!(
+            "Triggering Linux iptables block for IP: {} (requires root)",
+            ip
+        );
         let output = std::process::Command::new("iptables")
             .args(&["-A", "INPUT", "-s", ip, "-j", "DROP"])
             .output();
@@ -259,7 +280,10 @@ fn block_ip_firewall(ip: &str) {
                     info!("Successfully added iptables block rule for IP: {}", ip);
                 } else {
                     let err_msg = String::from_utf8_lossy(&out.stderr);
-                    warn!("Linux iptables execution failed (likely requires root/sudo): {}", err_msg.trim());
+                    warn!(
+                        "Linux iptables execution failed (likely requires root/sudo): {}",
+                        err_msg.trim()
+                    );
                 }
             }
             Err(e) => {
@@ -270,7 +294,10 @@ fn block_ip_firewall(ip: &str) {
 
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "android")))]
     {
-        info!("OS-level firewall blocking not implemented for OS ({}). Application-layer in-memory blocking remains active.", std::env::consts::OS);
+        info!(
+            "OS-level firewall blocking not implemented for OS ({}). Application-layer in-memory blocking remains active.",
+            std::env::consts::OS
+        );
     }
 }
 
@@ -278,7 +305,8 @@ pub struct NetworkService {
     swarm: Swarm<MyBehaviour>,
     state: Arc<RwLock<NodeState>>,
     command_rx: mpsc::Receiver<Command>,
-    pending_requests: HashMap<request_response::OutboundRequestId, oneshot::Sender<Result<ShardResponse>>>,
+    pending_requests:
+        HashMap<request_response::OutboundRequestId, oneshot::Sender<Result<ShardResponse>>>,
     unlisted_attempts: HashMap<String, (usize, std::time::Instant)>,
     blocked_ips: HashMap<String, std::time::Instant>,
 }
@@ -305,7 +333,8 @@ impl NetworkService {
         let gossipsub = gossipsub::Behaviour::new(
             gossipsub::MessageAuthenticity::Signed(keypair.clone()),
             gossipsub_config,
-        ).map_err(|e| anyhow!("Gossipsub init error: {:?}", e))?;
+        )
+        .map_err(|e| anyhow!("Gossipsub init error: {:?}", e))?;
 
         let ping = ping::Behaviour::new(ping::Config::default());
 
@@ -382,42 +411,54 @@ impl NetworkService {
                 state.listen_addresses.insert(address);
             }
             SwarmEvent::IncomingConnection { send_back_addr, .. } => {
-                if let Some(ip) = get_ip_from_multiaddr(&send_back_addr) {
-                    if let Some(expiry) = self.blocked_ips.get(&ip) {
-                        if std::time::Instant::now() < *expiry {
-                            warn!("Incoming connection from explicitly blocked IP: {}. Connection will be rejected.", ip);
-                        }
-                    }
+                if let Some(ip) = get_ip_from_multiaddr(&send_back_addr)
+                    && let Some(expiry) = self.blocked_ips.get(&ip)
+                    && std::time::Instant::now() < *expiry
+                {
+                    warn!(
+                        "Incoming connection from explicitly blocked IP: {}. Connection will be rejected.",
+                        ip
+                    );
                 }
             }
-            SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+            SwarmEvent::ConnectionEstablished {
+                peer_id, endpoint, ..
+            } => {
                 let mut state = self.state.write().await;
-                
+
                 let remote_ip_opt = get_ip_from_multiaddr(endpoint.get_remote_address());
-                if let Some(ref remote_ip) = remote_ip_opt {
-                    if let Some(expiry) = self.blocked_ips.get(remote_ip) {
-                        if std::time::Instant::now() < *expiry {
-                            warn!("Disconnecting connection from explicitly blocked IP: {}", remote_ip);
-                            self.swarm.disconnect_peer_id(peer_id).unwrap_or_default();
-                            return Ok(());
-                        }
-                    }
+                if let Some(ref remote_ip) = remote_ip_opt
+                    && let Some(expiry) = self.blocked_ips.get(remote_ip)
+                    && std::time::Instant::now() < *expiry
+                {
+                    warn!(
+                        "Disconnecting connection from explicitly blocked IP: {}",
+                        remote_ip
+                    );
+                    self.swarm.disconnect_peer_id(peer_id).unwrap_or_default();
+                    return Ok(());
                 }
 
                 if !state.is_trusted(&peer_id) {
-                    warn!("Disconnecting untrusted connection from PeerID: {}", peer_id);
+                    warn!(
+                        "Disconnecting untrusted connection from PeerID: {}",
+                        peer_id
+                    );
                     // Disconnect immediately
                     self.swarm.disconnect_peer_id(peer_id).unwrap_or_default();
-                    
+
                     if let Some(ip) = remote_ip_opt {
                         info!("Untrusted connection attempt from IP: {}", ip);
                         let now = std::time::Instant::now();
                         let mut trigger_ban = false;
-                        
+
                         if let Some(attempt) = self.unlisted_attempts.get_mut(&ip) {
                             if now.duration_since(attempt.1) < std::time::Duration::from_secs(60) {
                                 attempt.0 += 1;
-                                info!("Untrusted connection attempts from IP {}: {}/5", ip, attempt.0);
+                                info!(
+                                    "Untrusted connection attempts from IP {}: {}/5",
+                                    ip, attempt.0
+                                );
                                 if attempt.0 >= 5 {
                                     trigger_ban = true;
                                 }
@@ -428,10 +469,14 @@ impl NetworkService {
                         } else {
                             self.unlisted_attempts.insert(ip.clone(), (1, now));
                         }
-                        
+
                         if trigger_ban {
-                            warn!("IP {} exceeded 5 untrusted connection attempts in 60s. Banning for 30 minutes.", ip);
-                            self.blocked_ips.insert(ip.clone(), now + std::time::Duration::from_secs(30 * 60));
+                            warn!(
+                                "IP {} exceeded 5 untrusted connection attempts in 60s. Banning for 30 minutes.",
+                                ip
+                            );
+                            self.blocked_ips
+                                .insert(ip.clone(), now + std::time::Duration::from_secs(30 * 60));
                             self.unlisted_attempts.remove(&ip);
                             block_ip_firewall(&ip);
                         }
@@ -440,7 +485,10 @@ impl NetworkService {
                     info!("Connection established with trusted PeerID: {}", peer_id);
                     state.connected_peers.insert(peer_id);
                     // Add to Kademlia routing
-                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, endpoint.get_remote_address().clone());
+                    self.swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, endpoint.get_remote_address().clone());
                 }
             }
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
@@ -453,21 +501,39 @@ impl NetworkService {
                     let state = self.state.read().await;
                     if state.is_trusted(&peer_id) {
                         info!("mDNS discovered trusted peer {} at {}", peer_id, addr);
-                        self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                        self.swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .add_address(&peer_id, addr);
                     }
                 }
             }
-            SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::Message { peer, message })) => {
+            SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(
+                request_response::Event::Message { peer, message },
+            )) => {
                 self.handle_request_response(peer, message).await?;
             }
-            SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { request_id, error, .. })) => {
-                warn!("Outbound request-response failure {:?}: {:?}", request_id, error);
+            SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(
+                request_response::Event::OutboundFailure {
+                    request_id, error, ..
+                },
+            )) => {
+                warn!(
+                    "Outbound request-response failure {:?}: {:?}",
+                    request_id, error
+                );
                 if let Some(tx) = self.pending_requests.remove(&request_id) {
-                    tx.send(Err(anyhow!("Outbound request failure: {:?}", error))).unwrap_or_default();
+                    tx.send(Err(anyhow!("Outbound request failure: {:?}", error)))
+                        .unwrap_or_default();
                 }
             }
-            SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(request_response::Event::ResponseSent { .. })) => {}
-            SwarmEvent::Behaviour(MyBehaviourEvent::Gossipsub(gossipsub::Event::Message { message, .. })) => {
+            SwarmEvent::Behaviour(MyBehaviourEvent::RequestResponse(
+                request_response::Event::ResponseSent { .. },
+            )) => {}
+            SwarmEvent::Behaviour(MyBehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                message,
+                ..
+            })) => {
                 if let Ok(event_str) = String::from_utf8(message.data) {
                     info!("Gossipsub Event Received: {}", event_str);
                 }
@@ -483,44 +549,80 @@ impl NetworkService {
         message: request_response::Message<ShardRequest, ShardResponse>,
     ) -> Result<()> {
         match message {
-            request_response::Message::Request { channel, request, .. } => {
+            request_response::Message::Request {
+                channel, request, ..
+            } => {
                 // Pre-auth connection check
                 let mut state = self.state.write().await;
                 if !state.is_trusted(&peer_id) {
                     // Check if it's a Pair Request
-                    if let ShardRequest::Pair { ref caller_multiaddr } = request {
-                        info!("Received pairing request from peer {} with multiaddr {}", peer_id, caller_multiaddr);
+                    if let ShardRequest::Pair {
+                        ref caller_multiaddr,
+                    } = request
+                    {
+                        info!(
+                            "Received pairing request from peer {} with multiaddr {}",
+                            peer_id, caller_multiaddr
+                        );
                         state.add_trusted_peer(peer_id);
                         if let Ok(addr) = caller_multiaddr.parse::<Multiaddr>() {
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                            self.swarm
+                                .behaviour_mut()
+                                .kademlia
+                                .add_address(&peer_id, addr);
                         }
-                        self.swarm.behaviour_mut().request_response.send_response(channel, ShardResponse::PairAck { success: true }).unwrap_or_default();
+                        self.swarm
+                            .behaviour_mut()
+                            .request_response
+                            .send_response(channel, ShardResponse::PairAck { success: true })
+                            .unwrap_or_default();
                         return Ok(());
                     }
                     warn!("Rejecting request from untrusted peer {}", peer_id);
-                    self.swarm.behaviour_mut().request_response.send_response(channel, ShardResponse::Error("Untrusted peer".to_string())).unwrap_or_default();
+                    self.swarm
+                        .behaviour_mut()
+                        .request_response
+                        .send_response(channel, ShardResponse::Error("Untrusted peer".to_string()))
+                        .unwrap_or_default();
                     return Ok(());
                 }
 
                 // Handle authenticated requests
                 match request {
-                    ShardRequest::Store { shard_hash, data, .. } => {
+                    ShardRequest::Store {
+                        shard_hash, data, ..
+                    } => {
                         let hash_hex = hex::encode(shard_hash);
                         match state.write_shard(&hash_hex, &data) {
                             Ok(_) => {
                                 info!("Stored shard {} successfully", hash_hex);
-                                self.swarm.behaviour_mut().request_response.send_response(channel, ShardResponse::StoreAck { success: true }).unwrap_or_default();
+                                self.swarm
+                                    .behaviour_mut()
+                                    .request_response
+                                    .send_response(
+                                        channel,
+                                        ShardResponse::StoreAck { success: true },
+                                    )
+                                    .unwrap_or_default();
                             }
                             Err(e) => {
                                 error!("Failed to store shard {}: {}", hash_hex, e);
-                                self.swarm.behaviour_mut().request_response.send_response(channel, ShardResponse::Error(e)).unwrap_or_default();
+                                self.swarm
+                                    .behaviour_mut()
+                                    .request_response
+                                    .send_response(channel, ShardResponse::Error(e))
+                                    .unwrap_or_default();
                             }
                         }
                     }
                     ShardRequest::Retrieve { shard_hash } => {
                         let hash_hex = hex::encode(shard_hash);
                         let data = state.read_shard(&hash_hex);
-                        self.swarm.behaviour_mut().request_response.send_response(channel, ShardResponse::RetrieveAck { data }).unwrap_or_default();
+                        self.swarm
+                            .behaviour_mut()
+                            .request_response
+                            .send_response(channel, ShardResponse::RetrieveAck { data })
+                            .unwrap_or_default();
                     }
                     ShardRequest::AuditChallenge { shard_hash, nonce } => {
                         let hash_hex = hex::encode(shard_hash);
@@ -528,18 +630,39 @@ impl NetworkService {
                             let mut hash_input = bytes.clone();
                             hash_input.extend_from_slice(&nonce);
                             let audit_hash = hash_data(&hash_input);
-                            self.swarm.behaviour_mut().request_response.send_response(channel, ShardResponse::AuditResponse { hash: audit_hash }).unwrap_or_default();
+                            self.swarm
+                                .behaviour_mut()
+                                .request_response
+                                .send_response(
+                                    channel,
+                                    ShardResponse::AuditResponse { hash: audit_hash },
+                                )
+                                .unwrap_or_default();
                         } else {
-                            self.swarm.behaviour_mut().request_response.send_response(channel, ShardResponse::Error("Shard not found".to_string())).unwrap_or_default();
+                            self.swarm
+                                .behaviour_mut()
+                                .request_response
+                                .send_response(
+                                    channel,
+                                    ShardResponse::Error("Shard not found".to_string()),
+                                )
+                                .unwrap_or_default();
                         }
                     }
                     ShardRequest::Pair { .. } => {
                         // Already handled above
-                        self.swarm.behaviour_mut().request_response.send_response(channel, ShardResponse::PairAck { success: true }).unwrap_or_default();
+                        self.swarm
+                            .behaviour_mut()
+                            .request_response
+                            .send_response(channel, ShardResponse::PairAck { success: true })
+                            .unwrap_or_default();
                     }
                 }
             }
-            request_response::Message::Response { request_id, response } => {
+            request_response::Message::Response {
+                request_id,
+                response,
+            } => {
                 if let Some(tx) = self.pending_requests.remove(&request_id) {
                     tx.send(Ok(response)).unwrap_or_default();
                 }
@@ -550,23 +673,62 @@ impl NetworkService {
 
     async fn handle_command(&mut self, cmd: Command, self_tx: mpsc::Sender<Command>) {
         match cmd {
-            Command::Upload { file_id, data, passphrase, salt, k, m, response } => {
+            Command::Upload {
+                file_id,
+                data,
+                passphrase,
+                salt,
+                k,
+                m,
+                response,
+            } => {
                 let state = self.state.clone();
                 let swarm_local_peer_id = *self.swarm.local_peer_id();
                 tokio::spawn(async move {
-                    let res = perform_upload_async(file_id, data, passphrase, salt, k, m, state, swarm_local_peer_id, self_tx).await;
+                    let res = perform_upload_async(
+                        file_id,
+                        data,
+                        passphrase,
+                        salt,
+                        k,
+                        m,
+                        state,
+                        swarm_local_peer_id,
+                        self_tx,
+                    )
+                    .await;
                     response.send(res).unwrap_or_default();
                 });
             }
-            Command::Download { file_id, passphrase, salt, k, m, response } => {
+            Command::Download {
+                file_id,
+                passphrase,
+                salt,
+                k,
+                m,
+                response,
+            } => {
                 let state = self.state.clone();
                 let swarm_local_peer_id = *self.swarm.local_peer_id();
                 tokio::spawn(async move {
-                    let res = perform_download_async(file_id, passphrase, salt, k, m, state, swarm_local_peer_id, self_tx).await;
+                    let res = perform_download_async(
+                        file_id,
+                        passphrase,
+                        salt,
+                        k,
+                        m,
+                        state,
+                        swarm_local_peer_id,
+                        self_tx,
+                    )
+                    .await;
                     response.send(res).unwrap_or_default();
                 });
             }
-            Command::Pair { multiaddr, response } => {
+            Command::Pair {
+                multiaddr,
+                response,
+            } => {
                 let state = self.state.clone();
                 let self_tx_clone = self_tx.clone();
                 tokio::spawn(async move {
@@ -574,17 +736,32 @@ impl NetworkService {
                     response.send(res).unwrap_or_default();
                 });
             }
-            Command::SendRequest { peer_id, request, response } => {
-                let req_id = self.swarm.behaviour_mut().request_response.send_request(&peer_id, request);
+            Command::SendRequest {
+                peer_id,
+                request,
+                response,
+            } => {
+                let req_id = self
+                    .swarm
+                    .behaviour_mut()
+                    .request_response
+                    .send_request(&peer_id, request);
                 self.pending_requests.insert(req_id, response);
             }
             Command::AddPeerAddress { peer_id, addr } => {
                 let _ = self.swarm.dial(addr.clone());
-                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, addr);
             }
             Command::GossipBroadcast { topic, data } => {
                 let gossip_topic = gossipsub::IdentTopic::new(topic);
-                let _ = self.swarm.behaviour_mut().gossipsub.publish(gossip_topic, data);
+                let _ = self
+                    .swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(gossip_topic, data);
             }
         }
     }
@@ -596,7 +773,7 @@ async fn perform_pair_async(
     self_tx: mpsc::Sender<Command>,
 ) -> Result<()> {
     let addr: Multiaddr = multiaddr_str.parse()?;
-    
+
     // Extract PeerId from multiaddr
     let mut peer_id_opt = None;
     for protocol in addr.iter() {
@@ -605,7 +782,8 @@ async fn perform_pair_async(
             break;
         }
     }
-    let peer_id = peer_id_opt.ok_or_else(|| anyhow!("Multiaddr does not contain p2p PeerID component"))?;
+    let peer_id =
+        peer_id_opt.ok_or_else(|| anyhow!("Multiaddr does not contain p2p PeerID component"))?;
 
     // Add to state trusted list first to allow connection
     {
@@ -614,21 +792,32 @@ async fn perform_pair_async(
     }
 
     // Command the Swarm to add address and dial
-    self_tx.send(Command::AddPeerAddress { peer_id, addr }).await
+    self_tx
+        .send(Command::AddPeerAddress { peer_id, addr })
+        .await
         .map_err(|e| anyhow!("Failed to send AddPeerAddress command: {}", e))?;
 
     // Send a Pair Request
     let local_addr = {
         let s = state.read().await;
-        s.listen_addresses.iter().next().map(|a| a.to_string()).unwrap_or_default()
+        s.listen_addresses
+            .iter()
+            .next()
+            .map(|a| a.to_string())
+            .unwrap_or_default()
     };
 
     let (tx, rx) = oneshot::channel();
-    self_tx.send(Command::SendRequest {
-        peer_id,
-        request: ShardRequest::Pair { caller_multiaddr: local_addr },
-        response: tx,
-    }).await.map_err(|e| anyhow!("Failed to send SendRequest command: {}", e))?;
+    self_tx
+        .send(Command::SendRequest {
+            peer_id,
+            request: ShardRequest::Pair {
+                caller_multiaddr: local_addr,
+            },
+            response: tx,
+        })
+        .await
+        .map_err(|e| anyhow!("Failed to send SendRequest command: {}", e))?;
 
     match rx.await? {
         Ok(ShardResponse::PairAck { success: true }) => {
@@ -639,6 +828,7 @@ async fn perform_pair_async(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn perform_upload_async(
     file_id: String,
     data: Vec<u8>,
@@ -691,21 +881,28 @@ async fn perform_upload_async(
             } else {
                 // Send request to store on peer
                 let (tx, rx) = oneshot::channel();
-                self_tx.send(Command::SendRequest {
-                    peer_id: *peer,
-                    request: ShardRequest::Store {
-                        file_id: file_id.clone(),
-                        chunk_idx,
-                        shard_idx,
-                        shard_hash,
-                        data: shard_data,
-                    },
-                    response: tx,
-                }).await.map_err(|e| anyhow!("Failed to send Store request: {}", e))?;
+                self_tx
+                    .send(Command::SendRequest {
+                        peer_id: *peer,
+                        request: ShardRequest::Store {
+                            file_id: file_id.clone(),
+                            chunk_idx,
+                            shard_idx,
+                            shard_hash,
+                            data: shard_data,
+                        },
+                        response: tx,
+                    })
+                    .await
+                    .map_err(|e| anyhow!("Failed to send Store request: {}", e))?;
 
                 match rx.await? {
                     Ok(ShardResponse::StoreAck { success: true }) => {
-                        info!("Peer {} acknowledged store of shard {}", peer, hex::encode(shard_hash));
+                        info!(
+                            "Peer {} acknowledged store of shard {}",
+                            peer,
+                            hex::encode(shard_hash)
+                        );
                     }
                     other => {
                         return Err(anyhow!("Peer failed to store shard: {:?}", other));
@@ -728,15 +925,18 @@ async fn perform_upload_async(
         "root_hash": manifest.root_hash,
     });
     if let Ok(msg_bytes) = serde_json::to_vec(&gossip_msg) {
-        let _ = self_tx.send(Command::GossipBroadcast {
-            topic: "mesh-events".to_string(),
-            data: msg_bytes,
-        }).await;
+        let _ = self_tx
+            .send(Command::GossipBroadcast {
+                topic: "mesh-events".to_string(),
+                data: msg_bytes,
+            })
+            .await;
     }
 
     Ok(manifest)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn perform_download_async(
     file_id: String,
     passphrase: Vec<u8>,
@@ -748,7 +948,7 @@ async fn perform_download_async(
     self_tx: mpsc::Sender<Command>,
 ) -> Result<Vec<u8>> {
     info!("Starting download for file ID: {}", file_id);
-    
+
     // Read manifest locally
     let manifest = {
         let s = state.read().await;
@@ -768,13 +968,13 @@ async fn perform_download_async(
 
     let mut retrieved_shards = Vec::new();
 
-    for (_chunk_idx, chunk_manifest) in manifest.chunks.iter().enumerate() {
+    for chunk_manifest in manifest.chunks.iter() {
         let mut chunk_provided_shards = Vec::new();
         let chunk_peers = &peers[0..(k + m)];
 
         for (shard_idx, shard_hash) in chunk_manifest.shard_hashes.iter().enumerate() {
             let peer = &chunk_peers[shard_idx];
-            
+
             if peer == &swarm_local_peer_id {
                 // Read locally
                 let s = state.read().await;
@@ -783,18 +983,28 @@ async fn perform_download_async(
             } else {
                 // Request from peer
                 let (tx, rx) = oneshot::channel();
-                self_tx.send(Command::SendRequest {
-                    peer_id: *peer,
-                    request: ShardRequest::Retrieve { shard_hash: *shard_hash },
-                    response: tx,
-                }).await.map_err(|e| anyhow!("Failed to send Retrieve request: {}", e))?;
+                self_tx
+                    .send(Command::SendRequest {
+                        peer_id: *peer,
+                        request: ShardRequest::Retrieve {
+                            shard_hash: *shard_hash,
+                        },
+                        response: tx,
+                    })
+                    .await
+                    .map_err(|e| anyhow!("Failed to send Retrieve request: {}", e))?;
 
                 match rx.await {
                     Ok(Ok(ShardResponse::RetrieveAck { data: Some(bytes) })) => {
                         chunk_provided_shards.push(Some(bytes));
                     }
                     other => {
-                        warn!("Failed to retrieve shard {} from peer {}: {:?}", hex::encode(shard_hash), peer, other);
+                        warn!(
+                            "Failed to retrieve shard {} from peer {}: {:?}",
+                            hex::encode(shard_hash),
+                            peer,
+                            other
+                        );
                         chunk_provided_shards.push(None);
                     }
                 }
@@ -814,10 +1024,12 @@ async fn perform_download_async(
         "file_id": file_id,
     });
     if let Ok(msg_bytes) = serde_json::to_vec(&gossip_msg) {
-        let _ = self_tx.send(Command::GossipBroadcast {
-            topic: "mesh-events".to_string(),
-            data: msg_bytes,
-        }).await;
+        let _ = self_tx
+            .send(Command::GossipBroadcast {
+                topic: "mesh-events".to_string(),
+                data: msg_bytes,
+            })
+            .await;
     }
 
     Ok(plaintext_data)

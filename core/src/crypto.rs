@@ -1,8 +1,8 @@
 use aes_gcm::{
+    Aes256Gcm, Nonce,
     aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce
 };
-use argon2::{Argon2, Algorithm, Version, Params};
+use argon2::{Algorithm, Argon2, Params, Version};
 use hkdf::Hkdf;
 use sha2::Sha256;
 use thiserror::Error;
@@ -53,12 +53,14 @@ pub fn encrypt_data(data: &[u8], key: &[u8], iv: &[u8; 12]) -> Result<Vec<u8>, C
     let nonce = Nonce::from_slice(iv);
 
     // Encrypt the data. Aes256Gcm appends the 16-byte tag to the ciphertext.
-    let ciphertext_with_tag = cipher.encrypt(nonce, data).map_err(|_| CryptoError::AesGcm)?;
-    
+    let ciphertext_with_tag = cipher
+        .encrypt(nonce, data)
+        .map_err(|_| CryptoError::AesGcm)?;
+
     if ciphertext_with_tag.len() < 16 {
         return Err(CryptoError::AesGcm);
     }
-    
+
     // Re-structure to matching layout: IV (12) + Tag (16) + Ciphertext
     let tag_start = ciphertext_with_tag.len() - 16;
     let ciphertext = &ciphertext_with_tag[..tag_start];
@@ -91,7 +93,8 @@ pub fn decrypt_data(payload: &[u8], key: &[u8]) -> Result<Vec<u8>, CryptoError> 
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| CryptoError::AesGcm)?;
     let nonce = Nonce::from_slice(iv);
 
-    let plaintext = cipher.decrypt(nonce, ciphertext_with_tag.as_ref())
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext_with_tag.as_ref())
         .map_err(|_| CryptoError::AesGcm)?;
 
     Ok(plaintext)

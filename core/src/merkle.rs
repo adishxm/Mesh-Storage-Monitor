@@ -66,8 +66,9 @@ mod tests {
         let h = hash_data(data);
         // SHA-256 of "hello world"
         let expected = [
-            185, 77, 39, 185, 147, 77, 62, 8, 165, 46, 82, 215, 218, 125, 171, 250, 196, 132, 239, 227, 122, 83, 128, 238, 144, 136, 247, 172, 226, 239, 205, 233]
-        ;
+            185, 77, 39, 185, 147, 77, 62, 8, 165, 46, 82, 215, 218, 125, 171, 250, 196, 132, 239,
+            227, 122, 83, 128, 238, 144, 136, 247, 172, 226, 239, 205, 233,
+        ];
         assert_eq!(h, expected);
     }
 
@@ -90,7 +91,7 @@ mod tests {
 
         // Verify chunk hash
         assert!(verify_chunk(&shard_hashes, &chunk_hash));
-        
+
         // Tampered shard hashes list
         let tampered_shard_hashes = vec![h1, h1];
         assert!(!verify_chunk(&tampered_shard_hashes, &chunk_hash));

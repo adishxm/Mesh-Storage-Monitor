@@ -4,10 +4,12 @@ pub mod erasure;
 pub mod merkle;
 
 use crate::chunking::chunk_data;
-use crate::crypto::{derive_master_key, derive_file_key, encrypt_data, decrypt_data, derive_shard_iv};
+use crate::crypto::{
+    decrypt_data, derive_file_key, derive_master_key, derive_shard_iv, encrypt_data,
+};
 use crate::erasure::{encode_data, reconstruct_data};
-use crate::merkle::{hash_data, compute_chunk_hash, compute_root_hash, verify_shard, Hash256};
-use serde::{Serialize, Deserialize};
+use crate::merkle::{Hash256, compute_chunk_hash, compute_root_hash, hash_data, verify_shard};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileManifest {
@@ -27,6 +29,7 @@ pub struct ChunkManifest {
 
 /// Fully encodes a file: chunking -> Reed-Solomon -> Encryption -> Merkle DAG.
 /// Returns the file manifest and the encrypted shards (grouped by chunk).
+#[allow(clippy::type_complexity)]
 pub fn encode_file(
     data: &[u8],
     passphrase: &[u8],
@@ -138,7 +141,10 @@ pub fn decode_file(
         }
 
         // 2. Count valid shards
-        let valid_count = verified_encrypted_shards.iter().filter(|s| s.is_some()).count();
+        let valid_count = verified_encrypted_shards
+            .iter()
+            .filter(|s| s.is_some())
+            .count();
         if valid_count < k {
             return Err(format!(
                 "Cannot reconstruct chunk {}: only {} valid shards available (need at least {})",
@@ -162,12 +168,9 @@ pub fn decode_file(
         }
 
         // 4. Reed-Solomon reconstruct the chunk
-        let reconstructed_chunk = reconstruct_data(
-            &plain_shards,
-            k,
-            m,
-            chunk_manifest.original_len,
-        ).map_err(|e| e.to_string())?;
+        let reconstructed_chunk =
+            reconstruct_data(&plain_shards, k, m, chunk_manifest.original_len)
+                .map_err(|e| e.to_string())?;
 
         reassembled_file.extend_from_slice(&reconstructed_chunk);
     }
@@ -185,8 +188,8 @@ mod tests {
         let size_20mb = 20 * 1024 * 1024;
         let mut mock_file = vec![0u8; size_20mb];
         // Populate with repeating pattern to avoid trivial zeros
-        for i in 0..size_20mb {
-            mock_file[i] = (i % 251) as u8;
+        for (i, byte) in mock_file.iter_mut().enumerate() {
+            *byte = (i % 251) as u8;
         }
 
         let passphrase = b"strongpassphrase";
@@ -196,7 +199,8 @@ mod tests {
         let m = 1;
 
         // 2. Encode the file
-        let (manifest, encoded_chunks) = encode_file(&mock_file, passphrase, salt, file_id, k, m).unwrap();
+        let (manifest, encoded_chunks) =
+            encode_file(&mock_file, passphrase, salt, file_id, k, m).unwrap();
 
         // 3. Normal decode (all shards present) - must be byte-identical
         let shards_all_present: Vec<Vec<Option<Vec<u8>>>> = encoded_chunks
@@ -204,7 +208,8 @@ mod tests {
             .map(|chunk_shards| chunk_shards.iter().map(|s| Some(s.clone())).collect())
             .collect();
 
-        let decoded_normal = decode_file(&manifest, passphrase, salt, &shards_all_present, k, m).unwrap();
+        let decoded_normal =
+            decode_file(&manifest, passphrase, salt, &shards_all_present, k, m).unwrap();
         assert_eq!(mock_file, decoded_normal);
 
         // 4. Missing shards test (delete any `m` shards)
@@ -214,7 +219,8 @@ mod tests {
             chunk_shards[0] = None;
         }
 
-        let decoded_missing = decode_file(&manifest, passphrase, salt, &shards_missing_some, k, m).unwrap();
+        let decoded_missing =
+            decode_file(&manifest, passphrase, salt, &shards_missing_some, k, m).unwrap();
         assert_eq!(mock_file, decoded_missing);
 
         // 5. Corrupt shard test (a flipped bit in one shard is caught by Merkle verification before decode)
@@ -225,7 +231,8 @@ mod tests {
 
         // Verify that decode still succeeds (because Merkle verification catches the corrupt shard,
         // discards it, and uses the remaining k=2 healthy shards to reconstruct).
-        let decoded_corrupt = decode_file(&manifest, passphrase, salt, &shards_corrupted, k, m).unwrap();
+        let decoded_corrupt =
+            decode_file(&manifest, passphrase, salt, &shards_corrupted, k, m).unwrap();
         assert_eq!(mock_file, decoded_corrupt);
 
         // 6. Check that if we corrupt more than m shards, it fails
@@ -236,6 +243,10 @@ mod tests {
 
         let decode_result = decode_file(&manifest, passphrase, salt, &shards_failed, k, m);
         assert!(decode_result.is_err());
-        assert!(decode_result.unwrap_err().contains("Cannot reconstruct chunk 0"));
+        assert!(
+            decode_result
+                .unwrap_err()
+                .contains("Cannot reconstruct chunk 0")
+        );
     }
 }

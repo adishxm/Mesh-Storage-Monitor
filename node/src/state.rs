@@ -1,10 +1,10 @@
+use libp2p::{Multiaddr, PeerId};
+use mesh_core::FileManifest;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use libp2p::{PeerId, Multiaddr};
-use mesh_core::FileManifest;
-use serde::{Serialize, Deserialize};
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NodeStatus {
@@ -53,14 +53,13 @@ impl NodeState {
 
     pub fn load_trusted_peers(&mut self) {
         let path = self.data_dir.join("trusted_peers.json");
-        if path.exists() {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(list) = serde_json::from_str::<Vec<String>>(&content) {
-                    for peer_str in list {
-                        if let Ok(peer_id) = peer_str.parse::<PeerId>() {
-                            self.trusted_peers.insert(peer_id);
-                        }
-                    }
+        if path.exists()
+            && let Ok(content) = fs::read_to_string(&path)
+            && let Ok(list) = serde_json::from_str::<Vec<String>>(&content)
+        {
+            for peer_str in list {
+                if let Ok(peer_id) = peer_str.parse::<PeerId>() {
+                    self.trusted_peers.insert(peer_id);
                 }
             }
         }
@@ -72,10 +71,10 @@ impl NodeState {
     pub fn save_trusted_peers(&self) {
         let path = self.data_dir.join("trusted_peers.json");
         let list: Vec<String> = self.trusted_peers.iter().map(|p| p.to_string()).collect();
-        if let Ok(content) = serde_json::to_string_pretty(&list) {
-            if let Err(e) = fs::write(&path, content) {
-                error!("Failed to write trusted_peers.json: {}", e);
-            }
+        if let Ok(content) = serde_json::to_string_pretty(&list)
+            && let Err(e) = fs::write(&path, content)
+        {
+            error!("Failed to write trusted_peers.json: {}", e);
         }
     }
 
@@ -95,15 +94,18 @@ impl NodeState {
         let shards_dir = self.data_dir.join("shards");
         if let Ok(entries) = fs::read_dir(shards_dir) {
             for entry in entries.flatten() {
-                if let Ok(metadata) = entry.metadata() {
-                    if metadata.is_file() {
-                        total += metadata.len();
-                    }
+                if let Ok(metadata) = entry.metadata()
+                    && metadata.is_file()
+                {
+                    total += metadata.len();
                 }
             }
         }
         self.storage_used = total;
-        info!("Storage used: {} / {} bytes", self.storage_used, self.storage_quota);
+        info!(
+            "Storage used: {} / {} bytes",
+            self.storage_used, self.storage_quota
+        );
     }
 
     pub fn has_shard(&self, hash_hex: &str) -> bool {
@@ -140,14 +142,20 @@ impl NodeState {
     }
 
     pub fn save_manifest(&self, manifest: &FileManifest) -> Result<(), String> {
-        let path = self.data_dir.join("manifests").join(format!("{}.json", manifest.file_id));
+        let path = self
+            .data_dir
+            .join("manifests")
+            .join(format!("{}.json", manifest.file_id));
         let content = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
         fs::write(path, content).map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn read_manifest(&self, file_id: &str) -> Option<FileManifest> {
-        let path = self.data_dir.join("manifests").join(format!("{}.json", file_id));
+        let path = self
+            .data_dir
+            .join("manifests")
+            .join(format!("{}.json", file_id));
         if path.exists() {
             if let Ok(content) = fs::read_to_string(path) {
                 serde_json::from_str(&content).ok()
@@ -164,10 +172,10 @@ impl NodeState {
         let dir = self.data_dir.join("manifests");
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
-                if let Ok(content) = fs::read_to_string(entry.path()) {
-                    if let Ok(manifest) = serde_json::from_str::<FileManifest>(&content) {
-                        list.push(manifest);
-                    }
+                if let Ok(content) = fs::read_to_string(entry.path())
+                    && let Ok(manifest) = serde_json::from_str::<FileManifest>(&content)
+                {
+                    list.push(manifest);
                 }
             }
         }
@@ -185,7 +193,11 @@ impl NodeState {
 
         NodeStatus {
             peer_id: self.peer_id.to_string(),
-            listen_addresses: self.listen_addresses.iter().map(|a| a.to_string()).collect(),
+            listen_addresses: self
+                .listen_addresses
+                .iter()
+                .map(|a| a.to_string())
+                .collect(),
             peers: self.connected_peers.iter().map(|p| p.to_string()).collect(),
             storage_used: self.storage_used,
             storage_quota: self.storage_quota,

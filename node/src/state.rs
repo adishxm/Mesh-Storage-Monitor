@@ -36,6 +36,7 @@ pub struct NodeState {
     pub listen_addresses: HashSet<Multiaddr>,
     pub connected_peers: HashSet<PeerId>,
     pub trusted_peers: HashSet<PeerId>,
+    pub consumed_nonces: HashSet<String>,
     pub quota_tracker: QuotaTracker,
     pub storage_quota: u64,
     pub storage_used: u64,
@@ -64,6 +65,7 @@ impl NodeState {
             listen_addresses: HashSet::new(),
             connected_peers: HashSet::new(),
             trusted_peers: HashSet::new(),
+            consumed_nonces: HashSet::new(),
             quota_tracker,
             storage_quota: quota_bytes,
             storage_used: 0,
@@ -71,6 +73,7 @@ impl NodeState {
         };
 
         state.load_trusted_peers();
+        state.load_consumed_nonces();
         state.recalculate_storage_used();
         state
     }
@@ -148,6 +151,40 @@ impl NodeState {
 
     pub fn is_trusted(&self, peer_id: &PeerId) -> bool {
         self.trusted_peers.contains(peer_id)
+    }
+
+    pub fn load_consumed_nonces(&mut self) {
+        let path = self.data_dir.join("consumed_nonces.json");
+        if path.exists()
+            && let Ok(content) = fs::read_to_string(&path)
+            && let Ok(list) = serde_json::from_str::<Vec<String>>(&content)
+        {
+            self.consumed_nonces = list.into_iter().collect();
+            info!(
+                "Loaded {} consumed invitation nonces",
+                self.consumed_nonces.len()
+            );
+        }
+    }
+
+    pub fn save_consumed_nonces(&self) {
+        let path = self.data_dir.join("consumed_nonces.json");
+        let list: Vec<String> = self.consumed_nonces.iter().cloned().collect();
+        if let Ok(content) = serde_json::to_string_pretty(&list)
+            && let Err(e) = fs::write(&path, content)
+        {
+            error!("Failed to write consumed_nonces.json: {}", e);
+        }
+    }
+
+    pub fn consume_nonce(&mut self, nonce: &str) -> Result<(), String> {
+        if self.consumed_nonces.contains(nonce) {
+            return Err("Invitation nonce has already been used".to_string());
+        }
+        self.consumed_nonces.insert(nonce.to_string());
+        self.save_consumed_nonces();
+        info!("Consumed invitation single-use nonce: {}", nonce);
+        Ok(())
     }
 
     pub fn recalculate_storage_used(&mut self) {
@@ -390,5 +427,19 @@ mod tests {
         assert_eq!(node.state, NodeLifecycleState::Active);
         node.write_shard("3333", b"test")
             .expect("resumed node writes shard");
+    }
+
+    #[test]
+    fn test_nonce_single_use_enforcement() {
+        let (mut node, _temp) = temp_test_node(9904, 10_000);
+        let nonce = "unique_nonce_abc_123";
+
+        // First consume must succeed
+        assert!(node.consume_nonce(nonce).is_ok());
+        assert!(node.consumed_nonces.contains(nonce));
+
+        // Replay of same nonce must fail
+        let err = node.consume_nonce(nonce).unwrap_err();
+        assert_eq!(err, "Invitation nonce has already been used");
     }
 }

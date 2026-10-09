@@ -12,7 +12,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::network::Command;
 use crate::state::{NodeLifecycleState, NodeState, NodeStatus};
-use mesh_core::FileManifest;
+use mesh_core::{FileManifest, Invitation};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -53,6 +53,32 @@ pub struct LifecycleResponse {
     pub message: String,
 }
 
+#[derive(Deserialize)]
+pub struct CreateInviteRequest {
+    pub network_id: Option<String>,
+    pub organization_id: Option<String>,
+    pub duration_secs: Option<u64>,
+}
+
+#[derive(Serialize)]
+pub struct CreateInviteResponse {
+    pub invitation: Invitation,
+    pub qr_payload: String,
+}
+
+#[derive(Deserialize)]
+pub struct JoinInviteRequest {
+    pub invitation: Option<Invitation>,
+    pub qr_payload: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct JoinInviteResponse {
+    pub success: bool,
+    pub issuer_peer_id: String,
+    pub message: String,
+}
+
 pub fn make_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -66,6 +92,8 @@ pub fn make_router(state: AppState) -> Router {
         .route("/api/v1/shards", get(get_shards))
         .route("/api/v1/manifests", get(get_manifests))
         .route("/api/v1/quota", get(get_quota).post(set_quota))
+        .route("/api/v1/invite/create", post(create_invite))
+        .route("/api/v1/invite/join", post(join_invite))
         .route("/api/v1/pause", post(pause_node))
         .route("/api/v1/resume", post(resume_node))
         .route("/api/v1/leave", post(leave_node))
@@ -174,6 +202,111 @@ async fn leave_node(
     Ok(Json(LifecycleResponse {
         state: node_state.state,
         message: "Node departure initiated. Shard repair handoff started.".to_string(),
+    }))
+}
+
+async fn create_invite(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateInviteRequest>,
+) -> Result<Json<CreateInviteResponse>, (StatusCode, String)> {
+    let node_state = state.node_state.read().await;
+    let network_id = payload
+        .network_id
+        .unwrap_or_else(|| "mesh-alpha".to_string());
+    let organization_id = payload
+        .organization_id
+        .unwrap_or_else(|| "org_default".to_string());
+    let duration_secs = payload.duration_secs.unwrap_or(86400);
+
+    let bootstrap_addrs = node_state
+        .listen_addresses
+        .iter()
+        .map(|addr| format!("{}/p2p/{}", addr, node_state.peer_id))
+        .collect();
+
+    let invitation = crate::identity::create_signed_invitation(
+        &node_state.data_dir,
+        network_id,
+        organization_id,
+        node_state.peer_id.to_string(),
+        bootstrap_addrs,
+        duration_secs,
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let qr_payload = invitation
+        .to_qr_string()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(CreateInviteResponse {
+        invitation,
+        qr_payload,
+    }))
+}
+
+async fn join_invite(
+    State(state): State<AppState>,
+    Json(payload): Json<JoinInviteRequest>,
+) -> Result<Json<JoinInviteResponse>, (StatusCode, String)> {
+    let invite = if let Some(inv) = payload.invitation {
+        inv
+    } else if let Some(qr) = payload.qr_payload {
+        Invitation::from_qr_string(&qr).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid QR payload: {}", e),
+            )
+        })?
+    } else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Either invitation or qr_payload must be provided".to_string(),
+        ));
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    invite.verify(now).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invitation verification failed: {}", e),
+        )
+    })?;
+
+    {
+        let mut node_state = state.node_state.write().await;
+        node_state
+            .consume_nonce(&invite.single_use_nonce)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+        if let Ok(issuer_peer_id) = invite.issuer_peer_id.parse::<libp2p::PeerId>() {
+            node_state.add_trusted_peer(issuer_peer_id);
+        } else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Invalid issuer_peer_id in invitation".to_string(),
+            ));
+        }
+    }
+
+    for addr in &invite.bootstrap_addrs {
+        let (tx, _rx) = oneshot::channel();
+        let _ = state
+            .network_tx
+            .send(Command::Pair {
+                multiaddr: addr.clone(),
+                response: tx,
+            })
+            .await;
+    }
+
+    Ok(Json(JoinInviteResponse {
+        success: true,
+        issuer_peer_id: invite.issuer_peer_id,
+        message: "Invitation accepted. Issuer trusted and bootstrap dialed.".to_string(),
     }))
 }
 

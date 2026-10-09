@@ -1944,6 +1944,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "ed25519-dalek",
  "futures",
  "hex",
  "libp2p",

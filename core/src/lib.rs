@@ -2,6 +2,7 @@ pub mod chunking;
 pub mod crypto;
 pub mod erasure;
 pub mod format;
+pub mod invitation;
 pub mod merkle;
 pub mod quota;
 
@@ -11,6 +12,7 @@ use crate::crypto::{
 };
 use crate::erasure::{encode_data, reconstruct_data};
 use crate::merkle::{Hash256, compute_chunk_hash, compute_root_hash, hash_data, verify_shard};
+pub use invitation::{Invitation, InvitationError};
 use serde::{Deserialize, Serialize};
 
 fn default_schema_version() -> u16 {

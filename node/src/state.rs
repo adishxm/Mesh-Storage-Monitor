@@ -289,21 +289,31 @@ impl NodeState {
         );
     }
 
+    fn safe_manifest_filename(file_id: &str) -> String {
+        let sanitized: String = file_id
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        format!("{}.json", sanitized)
+    }
+
     pub fn save_manifest(&self, manifest: &FileManifest) -> Result<(), String> {
-        let path = self
-            .data_dir
-            .join("manifests")
-            .join(format!("{}.json", manifest.file_id));
+        let filename = Self::safe_manifest_filename(&manifest.file_id);
+        let path = self.data_dir.join("manifests").join(filename);
         let content = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
         fs::write(path, content).map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn read_manifest(&self, file_id: &str) -> Option<FileManifest> {
-        let path = self
-            .data_dir
-            .join("manifests")
-            .join(format!("{}.json", file_id));
+        let filename = Self::safe_manifest_filename(file_id);
+        let path = self.data_dir.join("manifests").join(filename);
         if path.exists() {
             if let Ok(content) = fs::read_to_string(path) {
                 serde_json::from_str(&content).ok()

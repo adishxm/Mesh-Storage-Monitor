@@ -1,6 +1,7 @@
 pub mod chunking;
 pub mod crypto;
 pub mod erasure;
+pub mod format;
 pub mod merkle;
 
 use crate::chunking::chunk_data;

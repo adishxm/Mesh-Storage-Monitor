@@ -4,5 +4,6 @@ members = [
     "core",
     "node",
     "mesh-cli",
-    "terminal-ui"
+    "terminal-ui",
+    "android-bridge"
 ]

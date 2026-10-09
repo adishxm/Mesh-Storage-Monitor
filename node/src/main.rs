@@ -1,18 +1,15 @@
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 
-mod api;
-mod network;
-mod state;
-
-use api::{AppState, make_router};
-use network::{Command, NetworkService};
-use state::NodeState;
+use mesh_node::api::{AppState, make_router};
+use mesh_node::identity::load_or_create_keypair;
+use mesh_node::network::{Command, NetworkService};
+use mesh_node::state::NodeState;
 
 struct Args {
     p2p_port: u16,
@@ -61,20 +58,6 @@ fn parse_args() -> Args {
         }
     }
     args
-}
-
-fn load_or_create_keypair(data_dir: &Path) -> anyhow::Result<libp2p::identity::Keypair> {
-    let path = data_dir.join("identity.key");
-    if path.exists() {
-        let bytes = fs::read(&path)?;
-        let key = libp2p::identity::Keypair::from_protobuf_encoding(&bytes)?;
-        Ok(key)
-    } else {
-        let key = libp2p::identity::Keypair::generate_ed25519();
-        let bytes = key.to_protobuf_encoding()?;
-        fs::write(&path, bytes)?;
-        Ok(key)
-    }
 }
 
 #[tokio::main]

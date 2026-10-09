@@ -1,27 +1,42 @@
 use libp2p::{Multiaddr, PeerId};
 use mesh_core::FileManifest;
+use mesh_core::quota::{QuotaPolicy, QuotaTracker};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use tracing::{error, info};
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NodeLifecycleState {
+    #[default]
+    Active,
+    Paused,
+    Leaving,
+    Revoked,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NodeStatus {
     pub peer_id: String,
+    pub state: NodeLifecycleState,
     pub listen_addresses: Vec<String>,
     pub peers: Vec<String>,
     pub storage_used: u64,
     pub storage_quota: u64,
+    pub usage_ratio: f64,
+    pub remaining_bytes: u64,
     pub shards: Vec<String>,
     pub trusted_peers: Vec<String>,
 }
 
 pub struct NodeState {
     pub peer_id: PeerId,
+    pub state: NodeLifecycleState,
     pub listen_addresses: HashSet<Multiaddr>,
     pub connected_peers: HashSet<PeerId>,
     pub trusted_peers: HashSet<PeerId>,
+    pub quota_tracker: QuotaTracker,
     pub storage_quota: u64,
     pub storage_used: u64,
     pub data_dir: PathBuf,
@@ -31,16 +46,25 @@ pub struct NodeState {
 impl NodeState {
     pub fn new(peer_id: PeerId, port: u16, quota_gb: f64) -> Self {
         let data_dir = PathBuf::from(format!("./data_{}", port));
+        Self::with_data_dir(peer_id, data_dir, quota_gb)
+    }
+
+    pub fn with_data_dir(peer_id: PeerId, data_dir: PathBuf, quota_gb: f64) -> Self {
         fs::create_dir_all(data_dir.join("shards")).unwrap_or_default();
         fs::create_dir_all(data_dir.join("manifests")).unwrap_or_default();
 
-        let quota_bytes = (quota_gb * 1024.0 * 1024.0 * 1024.0) as u64;
+        let quota_bytes = (quota_gb * 1024.0 * 1024.0 * 1024.0).round() as u64;
+        let quota_tracker =
+            QuotaTracker::from_policy(quota_bytes, &QuotaPolicy::AbsoluteBytes(quota_bytes))
+                .unwrap_or_else(|_| QuotaTracker::new(quota_bytes, quota_bytes));
 
         let mut state = Self {
             peer_id,
+            state: NodeLifecycleState::Active,
             listen_addresses: HashSet::new(),
             connected_peers: HashSet::new(),
             trusted_peers: HashSet::new(),
+            quota_tracker,
             storage_quota: quota_bytes,
             storage_used: 0,
             data_dir,
@@ -49,6 +73,43 @@ impl NodeState {
         state.load_trusted_peers();
         state.recalculate_storage_used();
         state
+    }
+
+    pub fn validate_hash_key(hash_hex: &str) -> Result<(), String> {
+        if hash_hex.is_empty() || hash_hex.len() > 128 {
+            return Err("Invalid hash length".to_string());
+        }
+        if !hash_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("Hash contains non-hexadecimal characters".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn pause(&mut self) -> Result<(), String> {
+        if self.state == NodeLifecycleState::Revoked {
+            return Err("Cannot pause a revoked node".to_string());
+        }
+        self.state = NodeLifecycleState::Paused;
+        info!("Node {} state transitioned to Paused", self.peer_id);
+        Ok(())
+    }
+
+    pub fn resume(&mut self) -> Result<(), String> {
+        if self.state == NodeLifecycleState::Revoked {
+            return Err("Cannot resume a revoked node".to_string());
+        }
+        self.state = NodeLifecycleState::Active;
+        info!("Node {} state transitioned to Active", self.peer_id);
+        Ok(())
+    }
+
+    pub fn leave(&mut self) -> Result<(), String> {
+        self.state = NodeLifecycleState::Leaving;
+        info!(
+            "Node {} state transitioned to Leaving (initiating shard handoff)",
+            self.peer_id
+        );
+        Ok(())
     }
 
     pub fn load_trusted_peers(&mut self) {
@@ -102,6 +163,7 @@ impl NodeState {
             }
         }
         self.storage_used = total;
+        self.quota_tracker.used_bytes = total;
         info!(
             "Storage used: {} / {} bytes",
             self.storage_used, self.storage_quota
@@ -109,10 +171,16 @@ impl NodeState {
     }
 
     pub fn has_shard(&self, hash_hex: &str) -> bool {
+        if Self::validate_hash_key(hash_hex).is_err() {
+            return false;
+        }
         self.data_dir.join("shards").join(hash_hex).exists()
     }
 
     pub fn read_shard(&self, hash_hex: &str) -> Option<Vec<u8>> {
+        if Self::validate_hash_key(hash_hex).is_err() {
+            return None;
+        }
         let path = self.data_dir.join("shards").join(hash_hex);
         if path.exists() {
             fs::read(path).ok()
@@ -121,24 +189,67 @@ impl NodeState {
         }
     }
 
+    /// Atomically writes a shard using a temporary file and rename.
+    /// Rejects writes if the node is paused/leaving or if quota is exceeded.
     pub fn write_shard(&mut self, hash_hex: &str, data: &[u8]) -> Result<(), String> {
-        if self.storage_used + data.len() as u64 > self.storage_quota {
-            return Err("Storage quota exceeded".to_string());
+        if self.state == NodeLifecycleState::Paused {
+            return Err("Node is currently paused".to_string());
+        }
+        if self.state == NodeLifecycleState::Leaving || self.state == NodeLifecycleState::Revoked {
+            return Err("Node is leaving or revoked, rejecting store".to_string());
+        }
+        Self::validate_hash_key(hash_hex)?;
+
+        let shard_len = data.len() as u64;
+        let shards_dir = self.data_dir.join("shards");
+        let dest_path = shards_dir.join(hash_hex);
+
+        // Idempotent write if shard already exists
+        if dest_path.exists() {
+            return Ok(());
         }
 
-        let path = self.data_dir.join("shards").join(hash_hex);
-        fs::write(path, data).map_err(|e| e.to_string())?;
-        self.recalculate_storage_used();
+        self.quota_tracker
+            .record_store(shard_len)
+            .map_err(|e| e.to_string())?;
+
+        let tmp_name = format!(".tmp_{}_{}", hash_hex, rand::random::<u32>());
+        let tmp_path = shards_dir.join(tmp_name);
+
+        if let Err(e) = fs::write(&tmp_path, data) {
+            self.quota_tracker.record_delete(shard_len);
+            return Err(e.to_string());
+        }
+
+        if let Err(e) = fs::rename(&tmp_path, &dest_path) {
+            let _ = fs::remove_file(&tmp_path);
+            self.quota_tracker.record_delete(shard_len);
+            return Err(e.to_string());
+        }
+
+        self.storage_used = self.quota_tracker.used_bytes;
         Ok(())
     }
 
     pub fn delete_shard(&mut self, hash_hex: &str) -> Result<(), String> {
+        Self::validate_hash_key(hash_hex)?;
         let path = self.data_dir.join("shards").join(hash_hex);
         if path.exists() {
+            let len = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             fs::remove_file(path).map_err(|e| e.to_string())?;
-            self.recalculate_storage_used();
+            self.quota_tracker.record_delete(len);
+            self.storage_used = self.quota_tracker.used_bytes;
         }
         Ok(())
+    }
+
+    pub fn set_quota(&mut self, quota_bytes: u64) {
+        self.storage_quota = quota_bytes;
+        self.quota_tracker.quota_bytes = quota_bytes;
+        info!(
+            "Node quota updated: {} bytes (used: {} bytes)",
+            self.storage_quota, self.storage_used
+        );
     }
 
     pub fn save_manifest(&self, manifest: &FileManifest) -> Result<(), String> {
@@ -187,12 +298,14 @@ impl NodeState {
             .map(|rd| {
                 rd.flatten()
                     .filter_map(|e| e.file_name().into_string().ok())
+                    .filter(|name| !name.starts_with(".tmp"))
                     .collect()
             })
             .unwrap_or_default();
 
         NodeStatus {
             peer_id: self.peer_id.to_string(),
+            state: self.state,
             listen_addresses: self
                 .listen_addresses
                 .iter()
@@ -201,8 +314,81 @@ impl NodeState {
             peers: self.connected_peers.iter().map(|p| p.to_string()).collect(),
             storage_used: self.storage_used,
             storage_quota: self.storage_quota,
+            usage_ratio: self.quota_tracker.usage_ratio(),
+            remaining_bytes: self.quota_tracker.remaining_bytes(),
             shards,
             trusted_peers: self.trusted_peers.iter().map(|p| p.to_string()).collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_test_node(_port: u16, quota_bytes: u64) -> (NodeState, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().expect("tempdir created");
+        let path = temp_dir.path().to_path_buf();
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id = PeerId::from(key.public());
+
+        let mut node = NodeState::with_data_dir(peer_id, path, 1.0);
+        node.set_quota(quota_bytes);
+        (node, temp_dir)
+    }
+
+    #[test]
+    fn test_validate_hash_key() {
+        assert!(
+            NodeState::validate_hash_key(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            )
+            .is_ok()
+        );
+        assert!(NodeState::validate_hash_key("").is_err());
+        assert!(NodeState::validate_hash_key("../etc/passwd").is_err());
+        assert!(NodeState::validate_hash_key("not a hex string!").is_err());
+    }
+
+    #[test]
+    fn test_atomic_write_and_read_shard() {
+        let (mut node, _temp) = temp_test_node(9901, 10_000);
+        let hash = "abcd1234ef";
+        let data = b"encrypted shard atomic content";
+
+        node.write_shard(hash, data).expect("write succeeds");
+        assert!(node.has_shard(hash));
+        let read = node.read_shard(hash).expect("read succeeds");
+        assert_eq!(read, data);
+        assert_eq!(node.storage_used, data.len() as u64);
+    }
+
+    #[test]
+    fn test_quota_overflow_rejection() {
+        let (mut node, _temp) = temp_test_node(9902, 100);
+        let hash1 = "1111";
+        let hash2 = "2222";
+
+        node.write_shard(hash1, &[0u8; 80])
+            .expect("first write succeeds");
+        let err = node.write_shard(hash2, &[0u8; 30]).unwrap_err();
+        assert!(err.contains("quota exceeded"));
+    }
+
+    #[test]
+    fn test_pause_and_resume_lifecycle() {
+        let (mut node, _temp) = temp_test_node(9903, 10_000);
+        assert_eq!(node.state, NodeLifecycleState::Active);
+
+        node.pause().unwrap();
+        assert_eq!(node.state, NodeLifecycleState::Paused);
+
+        let err = node.write_shard("3333", b"test").unwrap_err();
+        assert_eq!(err, "Node is currently paused");
+
+        node.resume().unwrap();
+        assert_eq!(node.state, NodeLifecycleState::Active);
+        node.write_shard("3333", b"test")
+            .expect("resumed node writes shard");
     }
 }

@@ -3,6 +3,7 @@ pub mod crypto;
 pub mod erasure;
 pub mod format;
 pub mod merkle;
+pub mod quota;
 
 use crate::chunking::chunk_data;
 use crate::crypto::{

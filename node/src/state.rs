@@ -28,6 +28,9 @@ pub struct NodeStatus {
     pub remaining_bytes: u64,
     pub shards: Vec<String>,
     pub trusted_peers: Vec<String>,
+    pub nat_status: String,
+    pub relay_addresses: Vec<String>,
+    pub bandwidth_limit_kbps: Option<u64>,
 }
 
 pub struct NodeState {
@@ -41,6 +44,9 @@ pub struct NodeState {
     pub storage_quota: u64,
     pub storage_used: u64,
     pub data_dir: PathBuf,
+    pub nat_status: String,
+    pub relay_addresses: HashSet<Multiaddr>,
+    pub bandwidth_limiter: Option<mesh_core::BandwidthLimiter>,
 }
 
 #[allow(dead_code)]
@@ -70,6 +76,9 @@ impl NodeState {
             storage_quota: quota_bytes,
             storage_used: 0,
             data_dir,
+            nat_status: "Unknown".to_string(),
+            relay_addresses: HashSet::new(),
+            bandwidth_limiter: None,
         };
 
         state.load_trusted_peers();
@@ -340,6 +349,35 @@ impl NodeState {
         list
     }
 
+    pub fn set_nat_status(&mut self, status: String) {
+        self.nat_status = status;
+    }
+
+    pub fn add_relay_address(&mut self, addr: Multiaddr) {
+        self.relay_addresses.insert(addr);
+    }
+
+    pub fn set_bandwidth_limit(&mut self, kbps: Option<u64>) {
+        if let Some(rate_kbps) = kbps {
+            let bytes_per_sec = rate_kbps * 1024;
+            let burst_capacity = bytes_per_sec * 2;
+            self.bandwidth_limiter = Some(mesh_core::BandwidthLimiter::new(
+                bytes_per_sec,
+                burst_capacity,
+            ));
+        } else {
+            self.bandwidth_limiter = None;
+        }
+    }
+
+    pub fn check_egress_bandwidth(&mut self, bytes: u64) -> bool {
+        if let Some(ref mut limiter) = self.bandwidth_limiter {
+            limiter.try_acquire(bytes)
+        } else {
+            true
+        }
+    }
+
     pub fn get_status(&self) -> NodeStatus {
         let shards = fs::read_dir(self.data_dir.join("shards"))
             .map(|rd| {
@@ -349,6 +387,11 @@ impl NodeState {
                     .collect()
             })
             .unwrap_or_default();
+
+        let bandwidth_limit_kbps = self
+            .bandwidth_limiter
+            .as_ref()
+            .map(|lim| lim.max_rate_bytes_per_sec / 1024);
 
         NodeStatus {
             peer_id: self.peer_id.to_string(),
@@ -365,6 +408,9 @@ impl NodeState {
             remaining_bytes: self.quota_tracker.remaining_bytes(),
             shards,
             trusted_peers: self.trusted_peers.iter().map(|p| p.to_string()).collect(),
+            nat_status: self.nat_status.clone(),
+            relay_addresses: self.relay_addresses.iter().map(|a| a.to_string()).collect(),
+            bandwidth_limit_kbps,
         }
     }
 }

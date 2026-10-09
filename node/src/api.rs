@@ -47,6 +47,17 @@ pub struct QuotaResponse {
     pub remaining_bytes: u64,
 }
 
+#[derive(Deserialize)]
+pub struct BandwidthLimitRequest {
+    pub limit_kbps: Option<u64>,
+}
+
+#[derive(Serialize)]
+pub struct BandwidthLimitResponse {
+    pub limit_kbps: Option<u64>,
+    pub success: bool,
+}
+
 #[derive(Serialize)]
 pub struct LifecycleResponse {
     pub state: NodeLifecycleState,
@@ -92,6 +103,7 @@ pub fn make_router(state: AppState) -> Router {
         .route("/api/v1/shards", get(get_shards))
         .route("/api/v1/manifests", get(get_manifests))
         .route("/api/v1/quota", get(get_quota).post(set_quota))
+        .route("/api/v1/bandwidth", get(get_bandwidth).post(set_bandwidth))
         .route("/api/v1/invite/create", post(create_invite))
         .route("/api/v1/invite/join", post(join_invite))
         .route("/api/v1/pause", post(pause_node))
@@ -164,6 +176,33 @@ async fn set_quota(
         usage_ratio: node_state.quota_tracker.usage_ratio(),
         remaining_bytes: node_state.quota_tracker.remaining_bytes(),
     }))
+}
+
+async fn get_bandwidth(State(state): State<AppState>) -> Json<BandwidthLimitResponse> {
+    let node_state = state.node_state.read().await;
+    let limit_kbps = node_state
+        .bandwidth_limiter
+        .as_ref()
+        .map(|l| l.max_rate_bytes_per_sec / 1024);
+    Json(BandwidthLimitResponse {
+        limit_kbps,
+        success: true,
+    })
+}
+
+async fn set_bandwidth(
+    State(state): State<AppState>,
+    Json(payload): Json<BandwidthLimitRequest>,
+) -> (StatusCode, Json<BandwidthLimitResponse>) {
+    let mut node_state = state.node_state.write().await;
+    node_state.set_bandwidth_limit(payload.limit_kbps);
+    (
+        StatusCode::OK,
+        Json(BandwidthLimitResponse {
+            limit_kbps: payload.limit_kbps,
+            success: true,
+        }),
+    )
 }
 
 async fn pause_node(

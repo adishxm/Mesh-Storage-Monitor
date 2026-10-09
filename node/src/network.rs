@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, StreamExt};
 use libp2p::{
-    Multiaddr, PeerId, Swarm, gossipsub, identify, kad, mdns, noise, ping,
+    Multiaddr, PeerId, Swarm, autonat, gossipsub, identify, kad, mdns, noise, ping, relay,
     request_response::{self, Codec, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
@@ -128,6 +128,8 @@ pub struct MyBehaviour {
     pub ping: ping::Behaviour,
     pub identify: identify::Behaviour,
     pub request_response: request_response::Behaviour<JsonCodec>,
+    pub relay: relay::Behaviour,
+    pub autonat: autonat::Behaviour,
 }
 
 #[derive(Debug)]
@@ -139,6 +141,8 @@ pub enum MyBehaviourEvent {
     Ping(ping::Event),
     Identify(identify::Event),
     RequestResponse(request_response::Event<ShardRequest, ShardResponse>),
+    Relay(relay::Event),
+    Autonat(autonat::Event),
 }
 
 impl From<kad::Event> for MyBehaviourEvent {
@@ -174,6 +178,18 @@ impl From<identify::Event> for MyBehaviourEvent {
 impl From<request_response::Event<ShardRequest, ShardResponse>> for MyBehaviourEvent {
     fn from(event: request_response::Event<ShardRequest, ShardResponse>) -> Self {
         MyBehaviourEvent::RequestResponse(event)
+    }
+}
+
+impl From<relay::Event> for MyBehaviourEvent {
+    fn from(event: relay::Event) -> Self {
+        MyBehaviourEvent::Relay(event)
+    }
+}
+
+impl From<autonat::Event> for MyBehaviourEvent {
+    fn from(event: autonat::Event) -> Self {
+        MyBehaviourEvent::Autonat(event)
     }
 }
 
@@ -351,6 +367,9 @@ impl NetworkService {
             request_response::Config::default(),
         );
 
+        let relay = relay::Behaviour::new(local_peer_id, relay::Config::default());
+        let autonat = autonat::Behaviour::new(local_peer_id, autonat::Config::default());
+
         let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
@@ -365,6 +384,8 @@ impl NetworkService {
                 ping,
                 identify,
                 request_response,
+                relay,
+                autonat,
             })?
             .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
@@ -538,6 +559,34 @@ impl NetworkService {
                     info!("Gossipsub Event Received: {}", event_str);
                 }
             }
+            SwarmEvent::Behaviour(MyBehaviourEvent::Autonat(autonat::Event::StatusChanged {
+                new,
+                ..
+            })) => {
+                let mut state = self.state.write().await;
+                let status_str = match new {
+                    autonat::NatStatus::Public(addr) => format!("Public ({})", addr),
+                    autonat::NatStatus::Private => "Private (behind NAT)".to_string(),
+                    autonat::NatStatus::Unknown => "Unknown".to_string(),
+                };
+                info!("AutoNAT status updated: {}", status_str);
+                state.set_nat_status(status_str);
+            }
+            SwarmEvent::Behaviour(MyBehaviourEvent::Relay(relay_event)) => match relay_event {
+                relay::Event::ReservationReqAccepted { src_peer_id, .. } => {
+                    info!("Relay v2 reservation accepted for peer: {}", src_peer_id);
+                }
+                relay::Event::CircuitReqAccepted {
+                    src_peer_id,
+                    dst_peer_id,
+                } => {
+                    info!(
+                        "Relay v2 circuit accepted between {} and {}",
+                        src_peer_id, dst_peer_id
+                    );
+                }
+                _ => {}
+            },
             _ => {}
         }
         Ok(())
@@ -592,6 +641,20 @@ impl NetworkService {
                     ShardRequest::Store {
                         shard_hash, data, ..
                     } => {
+                        let data_len = data.len() as u64;
+                        if !state.check_egress_bandwidth(data_len) {
+                            warn!("Throttling store request: bandwidth limit exceeded");
+                            self.swarm
+                                .behaviour_mut()
+                                .request_response
+                                .send_response(
+                                    channel,
+                                    ShardResponse::Error("Bandwidth limit exceeded".to_string()),
+                                )
+                                .unwrap_or_default();
+                            return Ok(());
+                        }
+
                         let hash_hex = hex::encode(shard_hash);
                         match state.write_shard(&hash_hex, &data) {
                             Ok(_) => {
@@ -618,6 +681,20 @@ impl NetworkService {
                     ShardRequest::Retrieve { shard_hash } => {
                         let hash_hex = hex::encode(shard_hash);
                         let data = state.read_shard(&hash_hex);
+                        if let Some(ref bytes) = data
+                            && !state.check_egress_bandwidth(bytes.len() as u64)
+                        {
+                            warn!("Throttling retrieve request: bandwidth limit exceeded");
+                            self.swarm
+                                .behaviour_mut()
+                                .request_response
+                                .send_response(
+                                    channel,
+                                    ShardResponse::Error("Bandwidth limit exceeded".to_string()),
+                                )
+                                .unwrap_or_default();
+                            return Ok(());
+                        }
                         self.swarm
                             .behaviour_mut()
                             .request_response

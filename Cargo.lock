@@ -1920,6 +1920,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "fastcdc",
+ "hex",
  "hkdf",
  "rand 0.8.6",
  "reed-solomon-erasure",

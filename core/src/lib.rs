@@ -12,15 +12,60 @@ use crate::erasure::{encode_data, reconstruct_data};
 use crate::merkle::{Hash256, compute_chunk_hash, compute_root_hash, hash_data, verify_shard};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+fn default_schema_version() -> u16 {
+    2
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FileManifest {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u16,
     pub file_id: String,
+    #[serde(default)]
+    pub file_name: Option<String>,
     pub original_len: usize,
     pub root_hash: Hash256,
+    #[serde(default)]
+    pub k: usize,
+    #[serde(default)]
+    pub m: usize,
+    #[serde(default)]
+    pub salt_hex: String,
+    #[serde(default)]
+    pub created_at: u64,
     pub chunks: Vec<ChunkManifest>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+impl FileManifest {
+    /// Validates the self-consistency of the manifest.
+    /// Checks that chunk hashes match the hashes of their child shards,
+    /// and that the root hash matches the hash of all chunks.
+    pub fn verify_structure(&self) -> Result<(), String> {
+        let mut computed_chunk_hashes = Vec::with_capacity(self.chunks.len());
+        for (idx, chunk) in self.chunks.iter().enumerate() {
+            let computed_chunk_hash = compute_chunk_hash(&chunk.shard_hashes);
+            if computed_chunk_hash != chunk.chunk_hash {
+                return Err(format!(
+                    "Chunk {} hash mismatch: expected {:?}, computed {:?}",
+                    idx, chunk.chunk_hash, computed_chunk_hash
+                ));
+            }
+            computed_chunk_hashes.push(computed_chunk_hash);
+        }
+
+        let computed_root = compute_root_hash(&computed_chunk_hashes);
+        if computed_root != self.root_hash {
+            return Err(format!(
+                "Root hash mismatch: expected {:?}, computed {:?}",
+                self.root_hash, computed_root
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ChunkManifest {
     pub chunk_hash: Hash256,
     pub shard_hashes: Vec<Hash256>,
@@ -75,10 +120,22 @@ pub fn encode_file(
     }
 
     let root_hash = compute_root_hash(&chunk_hashes);
+    let salt_hex = hex::encode(salt);
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
     let manifest = FileManifest {
+        schema_version: 2,
         file_id: file_id.to_string(),
+        file_name: None,
         original_len: data.len(),
         root_hash,
+        k,
+        m,
+        salt_hex,
+        created_at,
         chunks: chunk_manifests,
     };
 
@@ -97,6 +154,8 @@ pub fn decode_file(
     k: usize,
     m: usize,
 ) -> Result<Vec<u8>, String> {
+    manifest.verify_structure()?;
+
     let master_key = derive_master_key(passphrase, salt).map_err(|e| e.to_string())?;
     let file_key = derive_file_key(&master_key, salt, manifest.file_id.as_bytes());
 
@@ -249,5 +308,54 @@ mod tests {
                 .unwrap_err()
                 .contains("Cannot reconstruct chunk 0")
         );
+    }
+
+    #[test]
+    fn test_manifest_v2_roundtrip_and_verify() {
+        let data = b"Sample data for manifest v2 test";
+        let salt = b"salt_12345678";
+        let (manifest, _) = encode_file(data, b"pass", salt, "f-v2", 2, 1).unwrap();
+
+        assert_eq!(manifest.schema_version, 2);
+        assert_eq!(manifest.k, 2);
+        assert_eq!(manifest.m, 1);
+        assert_eq!(manifest.salt_hex, hex::encode(salt));
+        assert!(manifest.verify_structure().is_ok());
+
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+        let parsed: FileManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(manifest, parsed);
+        assert!(parsed.verify_structure().is_ok());
+    }
+
+    #[test]
+    fn test_manifest_tampered_root_fails_verification() {
+        let data = b"Integrity check test";
+        let salt = b"salt_12345678";
+        let (mut manifest, _) = encode_file(data, b"pass", salt, "f-tamper", 2, 1).unwrap();
+
+        // Tamper with root hash
+        manifest.root_hash[0] ^= 0xFF;
+        let err = manifest.verify_structure().unwrap_err();
+        assert!(err.contains("Root hash mismatch"));
+    }
+
+    #[test]
+    fn test_manifest_v1_backwards_compatibility() {
+        // v1 JSON lacked schema_version, k, m, salt_hex, created_at, file_name
+        let v1_json = r#"{
+            "file_id": "legacy_v1_file",
+            "original_len": 100,
+            "root_hash": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            "chunks": []
+        }"#;
+
+        let parsed: FileManifest = serde_json::from_str(v1_json).expect("v1 parses cleanly");
+        assert_eq!(parsed.schema_version, 2);
+        assert_eq!(parsed.file_id, "legacy_v1_file");
+        assert_eq!(parsed.original_len, 100);
+        assert!(parsed.file_name.is_none());
+        assert_eq!(parsed.k, 0);
+        assert_eq!(parsed.m, 0);
     }
 }

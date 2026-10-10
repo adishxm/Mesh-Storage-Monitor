@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod backup;
 pub mod chunking;
 pub mod credits;
 pub mod crypto;
@@ -18,6 +19,9 @@ use crate::merkle::{Hash256, compute_chunk_hash, compute_root_hash, hash_data, v
 pub use audit::{
     AuditChallenge, AuditProof, AuditVerificationResult, PeerReliabilityTracker,
     compute_audit_proof, verify_audit_proof,
+};
+pub use backup::{
+    BackupError, NodeBackupSnapshot, create_encrypted_backup, restore_encrypted_backup,
 };
 pub use credits::{
     CapacityVerificationGuard, CreditLedger, ReciprocityTier, SubnetDensityGuard, SybilError,

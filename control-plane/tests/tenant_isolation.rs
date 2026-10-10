@@ -14,6 +14,8 @@ fn make_claims(sub: &str, tenant_id: &str, role: &str) -> OidcClaims {
         tenant_id: tenant_id.to_string(),
         roles: vec![role.to_string()],
         exp: Utc::now().timestamp() + 3600,
+        iss: None,
+        aud: None,
     }
 }
 
@@ -315,25 +317,51 @@ async fn test_tenant_invitation_queue_and_single_use() {
     assert_eq!(expired_res.unwrap_err(), ServiceError::InviteExpired);
 }
 
+fn make_token(sub: &str, tenant_id: &str, role: &str) -> String {
+    let claims = make_claims(sub, tenant_id, role);
+    mesh_control_plane::create_jwt(
+        &claims,
+        mesh_control_plane::auth::DEFAULT_DEV_JWT_SECRET,
+    )
+    .expect("create jwt")
+}
+
 #[tokio::test]
 async fn test_control_plane_axum_http_api() {
     let service = ControlPlaneService::new();
     let app = make_router(service);
 
-    // 1. Create Tenant via HTTP POST
+    // 0. Verify that spoofed x-oidc-* headers without Bearer token are REJECTED with 401 Unauthorized
+    let spoof_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/control/tenants")
+        .header("content-type", "application/json")
+        .header("x-oidc-sub", "attacker-admin")
+        .header("x-oidc-tenant", "system")
+        .header("x-oidc-roles", "superadmin")
+        .body(Body::from(serde_json::to_vec(&serde_json::json!({
+            "name": "Attacker Tenant",
+            "slug": "attacker-tenant",
+            "max_quota_bytes": 1000000000
+        })).unwrap()))
+        .unwrap();
+
+    let spoof_resp = app.clone().oneshot(spoof_req).await.unwrap();
+    assert_eq!(spoof_resp.status(), StatusCode::UNAUTHORIZED);
+
+    // 1. Create Tenant via valid Bearer JWT
     let create_payload = serde_json::json!({
         "name": "Acme Global",
         "slug": "acme-global",
         "max_quota_bytes": 1000000000
     });
 
+    let admin_token = make_token("admin-root", "system", "superadmin");
     let req = Request::builder()
         .method("POST")
         .uri("/api/v1/control/tenants")
         .header("content-type", "application/json")
-        .header("x-oidc-sub", "admin-root")
-        .header("x-oidc-tenant", "system")
-        .header("x-oidc-roles", "superadmin")
+        .header("authorization", format!("Bearer {}", admin_token))
         .body(Body::from(serde_json::to_vec(&create_payload).unwrap()))
         .unwrap();
 
@@ -344,26 +372,24 @@ async fn test_control_plane_axum_http_api() {
     let tenant_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     let tenant_id = tenant_json["tenant_id"].as_str().unwrap().to_string();
 
-    // 2. Query Tenant with matching tenant claims -> HTTP 200 OK
+    // 2. Query Tenant with valid tenant member Bearer token -> HTTP 200 OK
+    let alice_token = make_token("alice", &tenant_id, "member");
     let get_req = Request::builder()
         .method("GET")
         .uri(format!("/api/v1/control/tenants/{}", tenant_id))
-        .header("x-oidc-sub", "alice")
-        .header("x-oidc-tenant", &tenant_id)
-        .header("x-oidc-roles", "member")
+        .header("authorization", format!("Bearer {}", alice_token))
         .body(Body::empty())
         .unwrap();
 
     let get_resp = app.clone().oneshot(get_req).await.unwrap();
     assert_eq!(get_resp.status(), StatusCode::OK);
 
-    // 3. Query Tenant with FOREIGN tenant claims -> HTTP 403 Forbidden!
+    // 3. Query Tenant with FOREIGN tenant Bearer token -> HTTP 403 Forbidden!
+    let eve_token = make_token("eve", "foreign_tenant_xyz", "member");
     let forbidden_req = Request::builder()
         .method("GET")
         .uri(format!("/api/v1/control/tenants/{}", tenant_id))
-        .header("x-oidc-sub", "eve")
-        .header("x-oidc-tenant", "foreign_tenant_xyz")
-        .header("x-oidc-roles", "member")
+        .header("authorization", format!("Bearer {}", eve_token))
         .body(Body::empty())
         .unwrap();
 

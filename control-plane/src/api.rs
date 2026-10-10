@@ -5,7 +5,6 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::Utc;
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 
@@ -42,38 +41,8 @@ impl IntoResponse for ServiceError {
     }
 }
 
-pub fn extract_claims(headers: &HeaderMap) -> OidcClaims {
-    let sub = headers
-        .get("x-oidc-sub")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("anon_sub")
-        .to_string();
-
-    let email = headers
-        .get("x-oidc-email")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("anon@meshstorage.cloud")
-        .to_string();
-
-    let tenant_id = headers
-        .get("x-oidc-tenant")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("default_tenant")
-        .to_string();
-
-    let roles: Vec<String> = headers
-        .get("x-oidc-roles")
-        .and_then(|h| h.to_str().ok())
-        .map(|r| r.split(',').map(|s| s.trim().to_string()).collect())
-        .unwrap_or_else(|| vec!["member".to_string()]);
-
-    OidcClaims {
-        sub,
-        email,
-        tenant_id,
-        roles,
-        exp: Utc::now().timestamp() + 3600,
-    }
+pub fn extract_claims(headers: &HeaderMap) -> Result<OidcClaims, ServiceError> {
+    crate::auth::authenticate_claims(headers)
 }
 
 #[derive(Deserialize)]
@@ -201,7 +170,7 @@ async fn create_tenant(
     headers: HeaderMap,
     Json(req): Json<CreateTenantRequest>,
 ) -> Result<(StatusCode, Json<Tenant>), ServiceError> {
-    let claims = extract_claims(&headers);
+    let claims = extract_claims(&headers)?;
     let tenant = state
         .service
         .create_tenant(&claims, req.name, req.slug, req.max_quota_bytes)
@@ -214,7 +183,7 @@ async fn get_tenant(
     Path(tenant_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<Tenant>, ServiceError> {
-    let claims = extract_claims(&headers);
+    let claims = extract_claims(&headers)?;
     let tenant = state.service.get_tenant(&claims, &tenant_id).await?;
     Ok(Json(tenant))
 }
@@ -225,7 +194,7 @@ async fn register_device(
     headers: HeaderMap,
     Json(req): Json<RegisterDeviceRequest>,
 ) -> Result<(StatusCode, Json<Device>), ServiceError> {
-    let claims = extract_claims(&headers);
+    let claims = extract_claims(&headers)?;
     let device = state
         .service
         .register_device(
@@ -245,7 +214,7 @@ async fn list_devices(
     Path(tenant_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<Device>>, ServiceError> {
-    let claims = extract_claims(&headers);
+    let claims = extract_claims(&headers)?;
     let devices = state.service.list_devices(&claims, &tenant_id).await?;
     Ok(Json(devices))
 }
@@ -268,7 +237,7 @@ async fn update_device_status(
     headers: HeaderMap,
     Json(req): Json<UpdateDeviceStatusRequest>,
 ) -> Result<Json<Device>, ServiceError> {
-    let claims = extract_claims(&headers);
+    let claims = extract_claims(&headers)?;
     let device = state
         .service
         .update_device_status(&claims, &tenant_id, &device_id, req.status)
@@ -282,7 +251,7 @@ async fn create_invite(
     headers: HeaderMap,
     Json(req): Json<CreateInviteRequest>,
 ) -> Result<(StatusCode, Json<Invite>), ServiceError> {
-    let claims = extract_claims(&headers);
+    let claims = extract_claims(&headers)?;
     let invite = state
         .service
         .create_invite(&claims, &tenant_id, req.duration_secs)
@@ -312,7 +281,7 @@ async fn get_tenant_metrics(
     Path(tenant_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<TenantMetrics>, ServiceError> {
-    let claims = extract_claims(&headers);
+    let claims = extract_claims(&headers)?;
     let metrics = state
         .service
         .get_tenant_metrics(&claims, &tenant_id)

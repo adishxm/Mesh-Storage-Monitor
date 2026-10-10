@@ -10,6 +10,8 @@ fn make_admin_claims(tenant_id: &str) -> OidcClaims {
         tenant_id: tenant_id.to_string(),
         roles: vec!["admin".to_string()],
         exp: Utc::now().timestamp() + 3600,
+        iss: None,
+        aud: None,
     }
 }
 

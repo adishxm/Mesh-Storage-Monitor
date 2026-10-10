@@ -133,6 +133,10 @@ pub struct OidcClaims {
     pub tenant_id: String,
     pub roles: Vec<String>,
     pub exp: i64,
+    #[serde(default)]
+    pub iss: Option<String>,
+    #[serde(default)]
+    pub aud: Option<String>,
 }
 
 impl OidcClaims {
@@ -225,6 +229,8 @@ mod tests {
             tenant_id: "tenant-acme".to_string(),
             roles: vec!["member".to_string()],
             exp: Utc::now().timestamp() + 3600,
+            iss: None,
+            aud: None,
         };
 
         // Access to own tenant allowed
@@ -240,6 +246,8 @@ mod tests {
             tenant_id: "tenant-acme".to_string(),
             roles: vec!["member".to_string()],
             exp: Utc::now().timestamp() - 10,
+            iss: None,
+            aud: None,
         };
         assert!(!expired_claims.can_access_tenant("tenant-acme"));
 
@@ -250,6 +258,8 @@ mod tests {
             tenant_id: "system".to_string(),
             roles: vec!["superadmin".to_string()],
             exp: Utc::now().timestamp() + 3600,
+            iss: None,
+            aud: None,
         };
         assert!(superadmin_claims.can_access_tenant("tenant-globex"));
     }

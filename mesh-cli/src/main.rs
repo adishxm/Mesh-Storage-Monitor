@@ -101,6 +101,36 @@ enum Commands {
 
     #[command(about = "Initiate permanent leave and trigger shard relocation")]
     Leave,
+
+    #[command(about = "Disaster recovery backup export and restoration")]
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
+
+    #[command(about = "Display Prometheus observability metrics")]
+    Metrics,
+}
+
+#[derive(Subcommand, Debug)]
+enum BackupAction {
+    #[command(about = "Create an encrypted disaster recovery backup archive")]
+    Export {
+        #[arg(short, long, help = "Passphrase to encrypt the backup")]
+        passphrase: Option<String>,
+
+        #[arg(short, long, help = "Output destination file path for .mbak archive")]
+        out: Option<PathBuf>,
+    },
+
+    #[command(about = "Restore node state from an encrypted backup archive")]
+    Restore {
+        #[arg(help = "Path to the .mbak backup archive file")]
+        file_path: PathBuf,
+
+        #[arg(short, long, help = "Passphrase to decrypt the backup")]
+        passphrase: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -583,6 +613,76 @@ async fn main() -> Result<()> {
             println!("Status: {}", resp["state"].as_str().unwrap_or(""));
             println!("{}", resp["message"].as_str().unwrap_or("Leave initiated."));
         }
+
+        Commands::Backup { action } => match action {
+            BackupAction::Export { passphrase, out } => {
+                let pass = passphrase.unwrap_or_else(|| "default_mesh_backup_key".to_string());
+                let url = format!("{}/api/v1/backup/export", base_url);
+                let resp: Value = client
+                    .post(&url)
+                    .json(&serde_json::json!({ "passphrase": pass }))
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
+
+                let hex_str = resp["archive_hex"]
+                    .as_str()
+                    .context("Missing archive_hex")?;
+                let bytes = hex::decode(hex_str).context("Failed to decode archive hex")?;
+                let dest = out.unwrap_or_else(|| PathBuf::from("node_backup.mbak"));
+                fs::write(&dest, &bytes)?;
+                println!("\x1b[1;32m✓ Backup exported successfully!\x1b[0m");
+                println!(
+                    " Archive Size : {} ({} bytes)",
+                    format_bytes(bytes.len() as u64),
+                    bytes.len()
+                );
+                println!(" Saved To     : {}", dest.display());
+            }
+            BackupAction::Restore {
+                file_path,
+                passphrase,
+            } => {
+                let pass = passphrase.unwrap_or_else(|| "default_mesh_backup_key".to_string());
+                let bytes = fs::read(&file_path).with_context(|| {
+                    format!("Failed to read backup file at {}", file_path.display())
+                })?;
+                let hex_str = hex::encode(bytes);
+
+                let url = format!("{}/api/v1/backup/restore", base_url);
+                let resp: Value = client
+                    .post(&url)
+                    .json(&serde_json::json!({
+                        "passphrase": pass,
+                        "archive_hex": hex_str
+                    }))
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
+
+                println!("\x1b[1;32m✓ Node state restored from disaster recovery backup!\x1b[0m");
+                println!(
+                    " Restored Manifests : {}",
+                    resp["restored_manifests"].as_u64().unwrap_or(0)
+                );
+                println!(
+                    " Restored Peers     : {}",
+                    resp["restored_peers"].as_u64().unwrap_or(0)
+                );
+                println!(
+                    " Storage Quota      : {}",
+                    format_bytes(resp["storage_quota"].as_u64().unwrap_or(0))
+                );
+            }
+        },
+
+        Commands::Metrics => {
+            let url = format!("{}/api/v1/metrics", base_url);
+            let resp = client.get(&url).send().await?.text().await?;
+            println!("{}", resp);
+        }
     }
 
     Ok(())
@@ -676,6 +776,59 @@ mod tests {
                 assert_eq!(file_id, "file_abc");
             }
             _ => panic!("Expected RepairCheck command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_backup_and_metrics() {
+        let cli_export = Cli::try_parse_from([
+            "mesh-cli",
+            "backup",
+            "export",
+            "--passphrase",
+            "mypass",
+            "--out",
+            "archive.mbak",
+        ])
+        .unwrap();
+        match cli_export.command {
+            Commands::Backup { action } => match action {
+                BackupAction::Export { passphrase, out } => {
+                    assert_eq!(passphrase.as_deref(), Some("mypass"));
+                    assert_eq!(out, Some(PathBuf::from("archive.mbak")));
+                }
+                _ => panic!("Expected Export action"),
+            },
+            _ => panic!("Expected Backup command"),
+        }
+
+        let cli_restore = Cli::try_parse_from([
+            "mesh-cli",
+            "backup",
+            "restore",
+            "archive.mbak",
+            "--passphrase",
+            "mypass",
+        ])
+        .unwrap();
+        match cli_restore.command {
+            Commands::Backup { action } => match action {
+                BackupAction::Restore {
+                    file_path,
+                    passphrase,
+                } => {
+                    assert_eq!(file_path, PathBuf::from("archive.mbak"));
+                    assert_eq!(passphrase.as_deref(), Some("mypass"));
+                }
+                _ => panic!("Expected Restore action"),
+            },
+            _ => panic!("Expected Backup command"),
+        }
+
+        let cli_metrics = Cli::try_parse_from(["mesh-cli", "metrics"]).unwrap();
+        match cli_metrics.command {
+            Commands::Metrics => {}
+            _ => panic!("Expected Metrics command"),
         }
     }
 }

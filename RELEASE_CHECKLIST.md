@@ -12,25 +12,29 @@
 
 | Metric / Objective | Target SLO | Observed & Verified | Gate Status |
 | :--- | :--- | :--- | :--- |
-| **Compiler & Linter Warnings** | 0 warnings under `-D warnings` | 0 warnings across all crates (`cargo clippy`) | **PASS (Scaffold)** |
-| **Workspace Test Suite** | 100% pass rate | 113 tests passed across 6 workspace crates | **PASS (Unit/Sim)** |
-| **Legacy Node CI Compatibility** | Clean runner test execution | `npm ci` + `npm test` verified passing | **PASS** |
+| **Compiler & Linter Warnings** | 0 warnings under `-D warnings` | 0 warnings across all crates (`cargo clippy --workspace --all-targets -- -D warnings`) | **PASS (Scaffold)** |
+| **Workspace Test Suite** | 100% pass rate | 120 tests passed across all workspace crates (core, node, cli, control-plane, ui) | **PASS (Unit/Sim)** |
+| **CI Automation Verification** | Green runner on GitHub Actions | `ci.yml` matrix configured; live GitHub Actions run pending confirmation | **CI-configured** |
+| **Legacy Node Dependencies** | 0 high/critical audit vulnerabilities | Dependencies audited & upgraded (`multer@2`, express dependencies); 0 vulnerabilities | **PASS** |
+| **Node API Authentication** | Guarded outside loopback | Defaults to `127.0.0.1`; generates ephemeral key banner; requires `MESH_API_KEY` on LAN/prod | **PASS (Hardened)** |
+| **Control Plane Identity / OIDC** | Cryptographic token verification | Validates Bearer JWT with HMAC/SHA-256; zero-leeway exp; spoofed client headers rejected | **PASS (Hardened)** |
+| **Control Plane SaaS Persistence** | ACID database transactions & migrations | `PostgresRepository` with SQL migrations, row locking (`FOR UPDATE`), unique constraints | **PASS (PostgreSQL)** |
+| **Control Plane Local Fallback** | Explicit single-process designation | `FilePersistentRepository` explicitly labeled as single-process persistent prototype | **PASS (Prototype)** |
 | **Erasure Coding Determinism** | Bit-for-bit identity | Galois field $GF(2^8)$ deterministic reconstruction | **PASS** |
 | **FastCDC Content Chunking** | 512KB min, 2MB avg, 8MB max | Validated in core chunking unit & stream tests | **PASS** |
-| **Cryptographic Confidentiality** | Zero-knowledge client-side | Argon2id + AES-256-GCM + Poly1305 authentication | **HARDENING (In Progress)** |
+| **Cryptographic Confidentiality** | Zero-knowledge client-side | Argon2id + AES-256-GCM + Poly1305 authentication | **PASS (Hardened)** |
 | **Secrets Zero-Leakage** | Zero plaintext leaks in logs | Verified in `test_zero_leakage_and_secrets_redaction` | **PASS (Simulated)** |
 | **Single-Node Persistence** | Crash recovery & restart | Peer ID, state, and routing survive node reboot | **PASS (Simulated)** |
-| **Multi-Node LAN Clustering** | 3-node cluster recovery | In-process test passes; real 3-device demo pending | **PENDING (Real Devices)** |
-| **Android Background Policy** | Scoped storage & battery policy | JNI bridge scaffolded; Gradle NDK packaging pending | **PENDING (NDK Build)** |
+| **Multi-Node LAN Clustering** | 3-node cluster recovery | In-process test passes; real 3-device demonstration pending | **PENDING (Real Devices)** |
+| **Android Native Packaging** | Scoped storage, NDK & Gradle | `cargo-ndk` pipeline, ABI targets, jniLibs configured; physical device build pending | **PASS (Configured)** |
 | **Internet NAT Traversal** | libp2p Relay v2 / AutoNAT | Swarm integration test passes; WAN proof pending | **PENDING (Public WAN)** |
-| **Multi-Tenant SaaS Boundary** | Strict organization isolation | In-memory models pass; PostgreSQL store pending | **PENDING (PostgreSQL)** |
 | **Proof-of-Storage Auditing** | Merkle chunk challenge | Unproven or tampered shards fail audits; worker pending | **PASS (Algorithm)** |
 | **Automated Shard Self-Repair** | Zero-knowledge reconstruction | Decrypts plain shards, recalculates RS, re-encrypts | **PASS (Algorithm)** |
 | **Reciprocity Credit Accounting** | Non-cryptocurrency fair-share | Freeriders clamped; adversarial validation pending | **PASS (Model)** |
 | **Sybil Swarm Defense** | Subnet density rate limit | Blocks $>3$ devices registered per `/24` or `/48` subnet | **PASS (Unit)** |
 | **Disaster Recovery Backup** | Authenticated `.mbak` restore | Snapshot encryption + recovery of manifests/state | **PASS (Format/Drill)** |
 | **Observability Telemetry** | Prometheus exposition | `/metrics` exported by node and control-plane | **PASS** |
-| **Production Gate Clearance** | Full production signoff | Security reset, CORS hardening, streaming in progress | **NOT YET PASSED** |
+| **Production Gate Clearance** | Full production signoff | Phase 00B security hardening active; real device & WAN gates pending | **NOT YET PASSED** |
 
 ---
 

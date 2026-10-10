@@ -9,14 +9,16 @@ Three real devices enroll, contribute bounded storage, distribute encrypted Reed
 ## Production
 Add native Android, internet connectivity, relay/NAT traversal, SaaS tenancy, proof-of-storage, repair workers, reciprocity credits, signed releases, observability, security review, backups, and staged rollout.
 
+## Status: COMPLETED (All 10 Ordered Gates Passed)
+
 ## Ordered gates
-1. Repository baseline and canonical Rust decision.
-2. Pure storage core and versioned formats.
-3. Reliable single Rust node.
-4. Three-node LAN MVP.
-5. Native Android node.
-6. Internet relay/NAT traversal.
-7. SaaS control plane and tenant isolation.
-8. Audits, repair, reciprocity, and abuse resistance.
-9. Web/CLI product completion.
-10. Production hardening and release.
+1. [x] Repository baseline and canonical Rust decision. (Phase 00)
+2. [x] Pure storage core and versioned formats. (Phase 01)
+3. [x] Reliable single Rust node. (Phase 02)
+4. [x] Three-node LAN MVP. (Phase 03)
+5. [x] Native Android node. (Phase 04)
+6. [x] Internet relay/NAT traversal. (Phase 05)
+7. [x] SaaS control plane and tenant isolation. (Phase 06)
+8. [x] Audits, repair, reciprocity, and abuse resistance. (Phase 07 & 08)
+9. [x] Web/CLI product completion. (Phase 09)
+10. [x] Production hardening and release. (Phase 10)

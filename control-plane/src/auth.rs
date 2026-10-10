@@ -76,12 +76,8 @@ pub fn verify_jwt(token: &str, secret: &[u8]) -> Result<OidcClaims, ServiceError
         validation.set_audience(&[expected_aud]);
     }
 
-    let token_data = decode::<ClaimsWrapper>(
-        token,
-        &DecodingKey::from_secret(secret),
-        &validation,
-    )
-    .map_err(|e| ServiceError::Unauthorized(format!("Invalid or expired JWT: {}", e)))?;
+    let token_data = decode::<ClaimsWrapper>(token, &DecodingKey::from_secret(secret), &validation)
+        .map_err(|e| ServiceError::Unauthorized(format!("Invalid or expired JWT: {}", e)))?;
 
     Ok(token_data.claims.into())
 }
@@ -96,7 +92,8 @@ pub fn verify_jwt(token: &str, secret: &[u8]) -> Result<OidcClaims, ServiceError
 /// 4. Otherwise -> Rejects with HTTP 401 Unauthorized.
 pub fn authenticate_claims(headers: &HeaderMap) -> Result<OidcClaims, ServiceError> {
     // 1. Check Bearer Token
-    if let Some(auth_val) = headers.get(axum::http::header::AUTHORIZATION)
+    if let Some(auth_val) = headers
+        .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
     {
@@ -114,8 +111,8 @@ pub fn authenticate_claims(headers: &HeaderMap) -> Result<OidcClaims, ServiceErr
         .and_then(|h| h.to_str().ok())
         .unwrap_or_default();
 
-    let is_trusted_gateway = !gateway_secret_env.is_empty()
-        && provided_gateway_secret == gateway_secret_env;
+    let is_trusted_gateway =
+        !gateway_secret_env.is_empty() && provided_gateway_secret == gateway_secret_env;
 
     // 3. Check explicit test mode override
     let allow_test_claims = std::env::var("MESH_ALLOW_TEST_CLAIMS")
@@ -212,7 +209,11 @@ mod tests {
         let token = create_jwt(&claims, secret).expect("create JWT");
         let res = verify_jwt(&token, secret);
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("Invalid or expired JWT"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Invalid or expired JWT")
+        );
     }
 
     #[test]
@@ -254,7 +255,10 @@ mod tests {
         }
 
         let mut headers = HeaderMap::new();
-        headers.insert("x-internal-gateway-secret", "gateway-token-abc".parse().unwrap());
+        headers.insert(
+            "x-internal-gateway-secret",
+            "gateway-token-abc".parse().unwrap(),
+        );
         headers.insert("x-oidc-sub", "verified_user".parse().unwrap());
         headers.insert("x-oidc-tenant", "ten_verified".parse().unwrap());
         headers.insert("x-oidc-roles", "admin".parse().unwrap());

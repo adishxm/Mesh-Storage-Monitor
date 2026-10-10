@@ -319,11 +319,8 @@ async fn test_tenant_invitation_queue_and_single_use() {
 
 fn make_token(sub: &str, tenant_id: &str, role: &str) -> String {
     let claims = make_claims(sub, tenant_id, role);
-    mesh_control_plane::create_jwt(
-        &claims,
-        mesh_control_plane::auth::DEFAULT_DEV_JWT_SECRET,
-    )
-    .expect("create jwt")
+    mesh_control_plane::create_jwt(&claims, mesh_control_plane::auth::DEFAULT_DEV_JWT_SECRET)
+        .expect("create jwt")
 }
 
 #[tokio::test]
@@ -339,11 +336,14 @@ async fn test_control_plane_axum_http_api() {
         .header("x-oidc-sub", "attacker-admin")
         .header("x-oidc-tenant", "system")
         .header("x-oidc-roles", "superadmin")
-        .body(Body::from(serde_json::to_vec(&serde_json::json!({
-            "name": "Attacker Tenant",
-            "slug": "attacker-tenant",
-            "max_quota_bytes": 1000000000
-        })).unwrap()))
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "name": "Attacker Tenant",
+                "slug": "attacker-tenant",
+                "max_quota_bytes": 1000000000
+            }))
+            .unwrap(),
+        ))
         .unwrap();
 
     let spoof_resp = app.clone().oneshot(spoof_req).await.unwrap();

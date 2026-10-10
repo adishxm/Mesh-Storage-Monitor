@@ -276,7 +276,10 @@ fn block_ip_firewall(ip: &str) {
 
     #[cfg(target_os = "windows")]
     {
-        info!("MESH_ENABLE_OS_FIREWALL enabled: Triggering Windows Firewall block for IP: {}", ip);
+        info!(
+            "MESH_ENABLE_OS_FIREWALL enabled: Triggering Windows Firewall block for IP: {}",
+            ip
+        );
         let rule_name = format!("MeshStorage Block {}", ip);
         let output = std::process::Command::new("netsh")
             .args([

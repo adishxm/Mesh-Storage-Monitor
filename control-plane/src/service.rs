@@ -11,6 +11,7 @@ use crate::models::{
     Device, DeviceStatus, DeviceType, Invite, OidcClaims, PeerCreditReport, Tenant, TenantMetrics,
     TenantStatus,
 };
+use crate::postgres::PostgresRepository;
 use crate::repository::{
     ControlPlaneRepository, ControlPlaneSnapshot, CreditLedgerEvent, FilePersistentRepository,
     InMemoryRepository,
@@ -78,6 +79,46 @@ impl ControlPlaneService {
         Self {
             repo: Arc::new(InMemoryRepository::new()),
         }
+    }
+
+    /// Initializes a production PostgreSQL-backed ControlPlaneService with schema migrations.
+    pub async fn new_postgres(database_url: &str) -> Result<Self, ServiceError> {
+        let repo = PostgresRepository::connect(database_url).await?;
+        Ok(Self {
+            repo: Arc::new(repo),
+        })
+    }
+
+    /// Initializes ControlPlaneService based on runtime environment configuration:
+    /// 1. `DATABASE_URL`: Production PostgreSQL repository (ACID transactions, DB-level uniqueness constraints, migrations)
+    /// 2. `CONTROL_PLANE_DB_PATH`: Single-process persistent file prototype
+    /// 3. Fallback: Ephemeral in-memory prototype with explicit warning
+    pub async fn from_env() -> Result<Self, ServiceError> {
+        if let Some(db_url) = std::env::var("DATABASE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+        {
+            tracing::info!(
+                "Initializing ControlPlaneService with production PostgreSQL repository"
+            );
+            return Self::new_postgres(&db_url).await;
+        }
+
+        if let Some(path) = std::env::var("CONTROL_PLANE_DB_PATH")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+        {
+            tracing::info!(
+                "Initializing ControlPlaneService with single-process file repository at {}",
+                path
+            );
+            return Self::new_persistent(path);
+        }
+
+        tracing::warn!(
+            "No DATABASE_URL or CONTROL_PLANE_DB_PATH configured. Using ephemeral InMemoryRepository prototype."
+        );
+        Ok(Self::new())
     }
 
     pub fn new_persistent<P: AsRef<std::path::Path>>(path: P) -> Result<Self, ServiceError> {

@@ -342,8 +342,13 @@ impl ControlPlaneRepository for InMemoryRepository {
     }
 }
 
-/// Crash-safe persistent repository that automatically flushes to disk upon mutations
-/// and restores state upon restart.
+/// Single-Process Persistent Prototype Repository
+///
+/// NOTE: Intended strictly for local single-process development, embedded testing,
+/// and offline prototyping. It persists whole-state JSON snapshots atomically to disk,
+/// but does NOT support multi-instance horizontal coordination, database indexes,
+/// row-level locking, or distributed queues. For multi-instance production SaaS,
+/// use `PostgresRepository`.
 #[derive(Debug)]
 pub struct FilePersistentRepository {
     inner: InMemoryRepository,

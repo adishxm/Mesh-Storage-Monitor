@@ -147,6 +147,11 @@ pub fn make_router(service: ControlPlaneService) -> Router {
             get(get_tenant_metrics),
         )
         .route("/api/v1/control/credits/:peer_id", get(get_peer_credits))
+        // Observability Metrics & Health Endpoints
+        .route("/api/v1/control/metrics", get(get_control_metrics))
+        .route("/metrics", get(get_control_metrics))
+        .route("/api/v1/control/health", get(get_control_health))
+        .route("/health", get(get_control_health))
         .with_state(state)
         .layer(cors)
 }
@@ -281,4 +286,72 @@ async fn get_peer_credits(
 ) -> impl IntoResponse {
     let report = state.service.get_peer_credit_report(&peer_id).await;
     (StatusCode::OK, Json(report))
+}
+
+async fn get_control_health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "UP",
+        "service": "mesh-control-plane",
+        "version": "0.1.0"
+    }))
+}
+
+async fn get_control_metrics(State(state): State<ApiState>) -> impl IntoResponse {
+    let (tenants_cnt, devices_cnt, total_quota, credits_cnt) =
+        state.service.get_system_metrics().await;
+
+    let body = format!(
+        r#"# HELP mesh_control_tenants_total Total active organizations and tenants
+# TYPE mesh_control_tenants_total gauge
+mesh_control_tenants_total {}
+
+# HELP mesh_control_devices_total Total registered devices across all tenants
+# TYPE mesh_control_devices_total gauge
+mesh_control_devices_total {}
+
+# HELP mesh_control_allocated_quota_bytes Total quota allocated across all tenants
+# TYPE mesh_control_allocated_quota_bytes gauge
+mesh_control_allocated_quota_bytes {}
+
+# HELP mesh_control_audited_peers_total Total peers with active credit ledgers
+# TYPE mesh_control_audited_peers_total gauge
+mesh_control_audited_peers_total {}
+"#,
+        tenants_cnt, devices_cnt, total_quota, credits_cnt
+    );
+
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_control_health_endpoint() {
+        let health = get_control_health().await;
+        assert_eq!(health["status"], "UP");
+        assert_eq!(health["service"], "mesh-control-plane");
+    }
+
+    #[tokio::test]
+    async fn test_control_metrics_endpoint() {
+        let service = ControlPlaneService::new();
+        let state = ApiState { service };
+        let resp = get_control_metrics(State(state)).await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8 string");
+        assert!(text.contains("mesh_control_tenants_total"));
+        assert!(text.contains("mesh_control_devices_total"));
+        assert!(text.contains("mesh_control_allocated_quota_bytes"));
+    }
 }

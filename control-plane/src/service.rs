@@ -464,4 +464,12 @@ impl ControlPlaneService {
             ledger.record_audit(passed);
         }
     }
+
+    pub async fn get_system_metrics(&self) -> (usize, usize, u64, usize) {
+        let tenants = self.tenants.read().await;
+        let devices = self.devices.read().await;
+        let credits = self.credits.read().await;
+        let total_quota: u64 = tenants.values().map(|t| t.max_quota_bytes).sum();
+        (tenants.len(), devices.len(), total_quota, credits.len())
+    }
 }

@@ -129,6 +129,32 @@ pub struct PeerCreditsResponse {
     pub is_throttled: bool,
 }
 
+#[derive(Deserialize)]
+pub struct BackupExportRequest {
+    pub passphrase: String,
+}
+
+#[derive(Serialize)]
+pub struct BackupExportResponse {
+    pub archive_hex: String,
+    pub bytes: usize,
+    pub created_at_secs: u64,
+}
+
+#[derive(Deserialize)]
+pub struct BackupRestoreRequest {
+    pub passphrase: String,
+    pub archive_hex: String,
+}
+
+#[derive(Serialize)]
+pub struct BackupRestoreResponse {
+    pub success: bool,
+    pub restored_manifests: usize,
+    pub restored_peers: usize,
+    pub storage_quota: u64,
+}
+
 pub fn make_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -155,6 +181,11 @@ pub fn make_router(state: AppState) -> Router {
         .route("/api/v1/repair/check/:file_id", get(check_file_repair))
         .route("/api/v1/credits/me", get(get_my_credits))
         .route("/api/v1/credits/peers/:peer_id", get(get_peer_credits))
+        // Observability and Disaster Recovery Endpoints
+        .route("/api/v1/metrics", get(get_metrics))
+        .route("/metrics", get(get_metrics))
+        .route("/api/v1/backup/export", post(export_backup))
+        .route("/api/v1/backup/restore", post(restore_backup))
         // Backward-compatibility aliases for local prototypes & dashboards
         .route("/status", get(get_status))
         .route("/peers", get(get_peers))
@@ -614,6 +645,122 @@ async fn get_peer_credits(
     })
 }
 
+async fn get_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let s = state.node_state.read().await;
+    let base_free = 1_073_741_824;
+    let ratio = 1.0;
+    let cap = 50_000_000_000;
+    let allowance = s
+        .local_credits
+        .earned_allowance_bytes(base_free, ratio, cap);
+    let credit_bal = s.local_credits.credit_balance(base_free, ratio, cap);
+    let limit_kbps = s
+        .bandwidth_limiter
+        .as_ref()
+        .map(|l| l.max_rate_bytes_per_sec / 1024)
+        .unwrap_or(0);
+
+    let body = format!(
+        r#"# HELP mesh_storage_used_bytes Locally used storage bytes
+# TYPE mesh_storage_used_bytes gauge
+mesh_storage_used_bytes {}
+
+# HELP mesh_storage_quota_bytes Locally configured storage quota bytes
+# TYPE mesh_storage_quota_bytes gauge
+mesh_storage_quota_bytes {}
+
+# HELP mesh_peers_connected Number of actively connected libp2p peers
+# TYPE mesh_peers_connected gauge
+mesh_peers_connected {}
+
+# HELP mesh_shards_stored_total Total count of locally stored shards
+# TYPE mesh_shards_stored_total gauge
+mesh_shards_stored_total {}
+
+# HELP mesh_reciprocity_contributed_bytes Total storage bytes contributed by this node
+# TYPE mesh_reciprocity_contributed_bytes counter
+mesh_reciprocity_contributed_bytes {}
+
+# HELP mesh_reciprocity_consumed_bytes Total storage bytes consumed by this node
+# TYPE mesh_reciprocity_consumed_bytes counter
+mesh_reciprocity_consumed_bytes {}
+
+# HELP mesh_reciprocity_allowance_bytes Earned reciprocal storage allowance
+# TYPE mesh_reciprocity_allowance_bytes gauge
+mesh_reciprocity_allowance_bytes {}
+
+# HELP mesh_reciprocity_credit_balance Net credit balance in bytes
+# TYPE mesh_reciprocity_credit_balance gauge
+mesh_reciprocity_credit_balance {}
+
+# HELP mesh_audit_challenges_passed_total Total count of passed proof-of-storage challenges
+# TYPE mesh_audit_challenges_passed_total counter
+mesh_audit_challenges_passed_total {}
+
+# HELP mesh_audit_challenges_failed_total Total count of failed proof-of-storage challenges
+# TYPE mesh_audit_challenges_failed_total counter
+mesh_audit_challenges_failed_total {}
+
+# HELP mesh_bandwidth_limit_kbps Bandwidth rate limit in KB/s (0 if unmetered)
+# TYPE mesh_bandwidth_limit_kbps gauge
+mesh_bandwidth_limit_kbps {}
+"#,
+        s.storage_used,
+        s.storage_quota,
+        s.connected_peers.len(),
+        s.get_status().shards.len(),
+        s.local_credits.bytes_contributed,
+        s.local_credits.bytes_consumed,
+        allowance,
+        credit_bal,
+        s.local_credits.audits_passed,
+        s.local_credits.audits_failed,
+        limit_kbps,
+    );
+
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+}
+
+async fn export_backup(
+    State(state): State<AppState>,
+    Json(payload): Json<BackupExportRequest>,
+) -> Result<Json<BackupExportResponse>, (StatusCode, String)> {
+    let s = state.node_state.read().await;
+    let snapshot = s.create_backup_snapshot();
+    let archive = mesh_core::create_encrypted_backup(&snapshot, &payload.passphrase)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let bytes = archive.len();
+    Ok(Json(BackupExportResponse {
+        archive_hex: hex::encode(archive),
+        bytes,
+        created_at_secs: snapshot.created_at_secs,
+    }))
+}
+
+async fn restore_backup(
+    State(state): State<AppState>,
+    Json(payload): Json<BackupRestoreRequest>,
+) -> Result<Json<BackupRestoreResponse>, (StatusCode, String)> {
+    let archive_bytes = hex::decode(&payload.archive_hex)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid hex: {}", e)))?;
+    let snapshot = mesh_core::restore_encrypted_backup(&archive_bytes, &payload.passphrase)
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?;
+    let mut s = state.node_state.write().await;
+    let (restored_manifests, restored_peers) = s.restore_backup_snapshot(snapshot);
+    Ok(Json(BackupRestoreResponse {
+        success: true,
+        restored_manifests,
+        restored_peers,
+        storage_quota: s.storage_quota,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,5 +776,82 @@ mod tests {
         assert!(html.contains("MESH STORAGE MONITOR"));
         assert!(html.contains("Reciprocity Tier"));
         assert!(html.contains("Self-Healing Redundancy Inspector"));
+    }
+
+    #[tokio::test]
+    async fn test_prometheus_metrics_endpoint() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id = libp2p::PeerId::from(key.public());
+        let node_state = NodeState::with_data_dir(peer_id, temp_dir.path().to_path_buf(), 2.0);
+        let (tx, _rx) = mpsc::channel(1);
+        let app_state = AppState {
+            node_state: Arc::new(RwLock::new(node_state)),
+            network_tx: tx,
+        };
+
+        let resp = get_metrics(State(app_state)).await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let metrics_text = String::from_utf8(body.to_vec()).expect("utf8 string");
+        assert!(metrics_text.contains("mesh_storage_used_bytes"));
+        assert!(metrics_text.contains("mesh_storage_quota_bytes"));
+        assert!(metrics_text.contains("mesh_reciprocity_contributed_bytes"));
+    }
+
+    #[tokio::test]
+    async fn test_api_backup_export_and_restore_roundtrip() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id = libp2p::PeerId::from(key.public());
+        let mut node_state = NodeState::with_data_dir(peer_id, temp_dir.path().to_path_buf(), 5.0);
+        node_state.record_peer_storage("12D3KooWRemoteNode", 4096, 2048);
+
+        let (tx, _rx) = mpsc::channel(1);
+        let app_state = AppState {
+            node_state: Arc::new(RwLock::new(node_state)),
+            network_tx: tx,
+        };
+
+        // Export backup
+        let export_req = BackupExportRequest {
+            passphrase: "secure_dr_passphrase_123".to_string(),
+        };
+        let export_resp = export_backup(State(app_state.clone()), Json(export_req))
+            .await
+            .expect("export ok");
+        assert!(export_resp.bytes > 0);
+        assert!(!export_resp.archive_hex.is_empty());
+
+        // Restore backup into new fresh node
+        let temp_dir2 = tempfile::tempdir().unwrap();
+        let key2 = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id2 = libp2p::PeerId::from(key2.public());
+        let fresh_node = NodeState::with_data_dir(peer_id2, temp_dir2.path().to_path_buf(), 0.5);
+        let (tx2, _rx2) = mpsc::channel(1);
+        let app_state2 = AppState {
+            node_state: Arc::new(RwLock::new(fresh_node)),
+            network_tx: tx2,
+        };
+
+        let restore_req = BackupRestoreRequest {
+            passphrase: "secure_dr_passphrase_123".to_string(),
+            archive_hex: export_resp.archive_hex.clone(),
+        };
+        let restore_resp = restore_backup(State(app_state2.clone()), Json(restore_req))
+            .await
+            .expect("restore ok");
+        assert!(restore_resp.success);
+        assert_eq!(restore_resp.restored_peers, 1);
+
+        // Verify state is restored
+        let restored_state = app_state2.node_state.read().await;
+        assert!(
+            restored_state
+                .peer_credits
+                .contains_key("12D3KooWRemoteNode")
+        );
     }
 }

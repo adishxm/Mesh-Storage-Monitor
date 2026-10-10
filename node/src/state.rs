@@ -534,6 +534,53 @@ impl NodeState {
 
         degraded_chunks
     }
+
+    pub fn create_backup_snapshot(&self) -> mesh_core::NodeBackupSnapshot {
+        let now_sec = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut snapshot = mesh_core::NodeBackupSnapshot::new(
+            self.peer_id.to_string(),
+            self.storage_quota,
+            self.storage_used,
+            now_sec,
+        );
+        snapshot.known_manifests = self.list_manifests();
+        snapshot.local_credit_ledger = Some(self.local_credits.clone());
+        snapshot.peer_credit_ledgers = self.peer_credits.values().cloned().collect();
+        snapshot
+            .metadata
+            .insert("nat_status".to_string(), self.nat_status.clone());
+        snapshot.metadata.insert(
+            "trusted_peers_count".to_string(),
+            self.trusted_peers.len().to_string(),
+        );
+        snapshot
+    }
+
+    pub fn restore_backup_snapshot(
+        &mut self,
+        snapshot: mesh_core::NodeBackupSnapshot,
+    ) -> (usize, usize) {
+        self.set_quota(snapshot.storage_quota_bytes);
+        if let Some(local_credits) = snapshot.local_credit_ledger {
+            self.local_credits = local_credits;
+        }
+        let restored_peers = snapshot.peer_credit_ledgers.len();
+        for peer_credit in snapshot.peer_credit_ledgers {
+            self.peer_credits
+                .insert(peer_credit.peer_id.clone(), peer_credit);
+        }
+        let mut restored_manifests = 0;
+        for manifest in snapshot.known_manifests {
+            if self.save_manifest(&manifest).is_ok() {
+                restored_manifests += 1;
+            }
+        }
+        self.recalculate_storage_used();
+        (restored_manifests, restored_peers)
+    }
 }
 
 #[cfg(test)]
@@ -618,5 +665,40 @@ mod tests {
         // Replay of same nonce must fail
         let err = node.consume_nonce(nonce).unwrap_err();
         assert_eq!(err, "Invitation nonce has already been used");
+    }
+
+    #[test]
+    fn test_backup_and_disaster_recovery_snapshot() {
+        let (mut node, _temp) = temp_test_node(9905, 5_000_000);
+        node.record_peer_storage("12D3KooWPeerRemote", 1024, 512);
+
+        let manifest = mesh_core::FileManifest {
+            schema_version: 2,
+            file_id: "test-file-1".to_string(),
+            file_name: Some("data.bin".to_string()),
+            original_len: 2048,
+            root_hash: [1u8; 32],
+            k: 2,
+            m: 1,
+            salt_hex: "aabb".to_string(),
+            created_at: 100,
+            chunks: Vec::new(),
+        };
+        node.save_manifest(&manifest).unwrap();
+
+        let snapshot = node.create_backup_snapshot();
+        assert_eq!(snapshot.peer_id, node.peer_id.to_string());
+        assert_eq!(snapshot.known_manifests.len(), 1);
+        assert_eq!(snapshot.peer_credit_ledgers.len(), 1);
+
+        // Simulate new fresh node restoring from snapshot
+        let (mut fresh_node, _temp2) = temp_test_node(9906, 1_000);
+        let (restored_manifests, restored_peers) = fresh_node.restore_backup_snapshot(snapshot);
+
+        assert_eq!(restored_manifests, 1);
+        assert_eq!(restored_peers, 1);
+        assert_eq!(fresh_node.storage_quota, 5_000_000);
+        assert!(fresh_node.read_manifest("test-file-1").is_some());
+        assert!(fresh_node.peer_credits.contains_key("12D3KooWPeerRemote"));
     }
 }

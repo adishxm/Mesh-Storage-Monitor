@@ -258,10 +258,25 @@ fn get_ip_from_multiaddr(addr: &Multiaddr) -> Option<String> {
     None
 }
 
+/// Optional administrator feature to sync blocked IPs with OS-level firewalls.
+/// Primary node defense is always application-layer libp2p identity verification,
+/// signed enrollment tokens, peer revocation, and in-memory rate limiting.
 fn block_ip_firewall(ip: &str) {
+    let os_firewall_enabled = std::env::var("MESH_ENABLE_OS_FIREWALL")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if !os_firewall_enabled {
+        info!(
+            "Application-layer rate limit ban enforced for IP: {}. (OS-level firewall integration disabled by default)",
+            ip
+        );
+        return;
+    }
+
     #[cfg(target_os = "windows")]
     {
-        info!("Triggering Windows Firewall block for IP: {}", ip);
+        info!("MESH_ENABLE_OS_FIREWALL enabled: Triggering Windows Firewall block for IP: {}", ip);
         let rule_name = format!("MeshStorage Block {}", ip);
         let output = std::process::Command::new("netsh")
             .args([
@@ -300,7 +315,7 @@ fn block_ip_firewall(ip: &str) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         info!(
-            "Triggering Linux iptables block for IP: {} (requires root)",
+            "MESH_ENABLE_OS_FIREWALL enabled: Triggering Linux iptables block for IP: {} (requires root)",
             ip
         );
         let output = std::process::Command::new("iptables")

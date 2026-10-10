@@ -7,7 +7,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 use crate::models::{Device, DeviceStatus, DeviceType, Invite, OidcClaims, Tenant, TenantMetrics};
 use crate::service::{ControlPlaneService, ServiceError};
@@ -36,6 +36,7 @@ impl IntoResponse for ServiceError {
             ServiceError::DuplicateSlug(m) => (StatusCode::CONFLICT, m),
             ServiceError::DuplicateDevice(m) => (StatusCode::CONFLICT, m),
             ServiceError::TenantInactive(m) => (StatusCode::FORBIDDEN, m),
+            ServiceError::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, m),
         };
         (status, Json(serde_json::json!({ "error": msg }))).into_response()
     }
@@ -115,10 +116,49 @@ pub struct ConsumeInviteRequest {
 }
 
 pub fn make_router(service: ControlPlaneService) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let loopback_origins = [
+        "http://localhost:3000".parse().unwrap(),
+        "http://127.0.0.1:3000".parse().unwrap(),
+        "http://[::1]:3000".parse().unwrap(),
+        "http://localhost:8080".parse().unwrap(),
+        "http://127.0.0.1:8080".parse().unwrap(),
+    ];
+    let mut cors = CorsLayer::new()
+        .allow_origin(loopback_origins)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderName::from_static("x-oidc-sub"),
+            axum::http::HeaderName::from_static("x-oidc-email"),
+            axum::http::HeaderName::from_static("x-oidc-tenant"),
+            axum::http::HeaderName::from_static("x-oidc-roles"),
+        ]);
+
+    if let Some(val) = std::env::var("CONTROL_PLANE_ALLOWED_ORIGIN")
+        .ok()
+        .and_then(|orig| orig.parse::<axum::http::HeaderValue>().ok())
+    {
+        cors = CorsLayer::new()
+            .allow_origin([val])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderName::from_static("x-oidc-sub"),
+                axum::http::HeaderName::from_static("x-oidc-email"),
+                axum::http::HeaderName::from_static("x-oidc-tenant"),
+                axum::http::HeaderName::from_static("x-oidc-roles"),
+            ]);
+    }
 
     let state = ApiState { service };
 

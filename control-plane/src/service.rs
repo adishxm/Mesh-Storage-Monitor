@@ -1,13 +1,19 @@
+//! Multi-Tenant SaaS Control Plane Business Logic (REQ-17)
+//! Implements strict tenant boundary isolation, device registration,
+//! single-use invite tokens, and tenant storage metrics.
+
 use chrono::{Duration, Utc};
-use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::models::{
     Device, DeviceStatus, DeviceType, Invite, OidcClaims, PeerCreditReport, Tenant, TenantMetrics,
     TenantStatus,
+};
+use crate::repository::{
+    ControlPlaneRepository, ControlPlaneSnapshot, CreditLedgerEvent, FilePersistentRepository,
+    InMemoryRepository,
 };
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -51,19 +57,41 @@ pub enum ServiceError {
 
     #[error("Tenant is suspended or terminated: {0}")]
     TenantInactive(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ControlPlaneService {
-    tenants: Arc<RwLock<HashMap<String, Tenant>>>,
-    devices: Arc<RwLock<HashMap<String, Device>>>,
-    invites: Arc<RwLock<HashMap<String, Invite>>>,
-    credits: Arc<RwLock<HashMap<String, mesh_core::CreditLedger>>>,
+    repo: Arc<dyn ControlPlaneRepository>,
+}
+
+impl Default for ControlPlaneService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ControlPlaneService {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            repo: Arc::new(InMemoryRepository::new()),
+        }
+    }
+
+    pub fn new_persistent<P: AsRef<std::path::Path>>(path: P) -> Result<Self, ServiceError> {
+        Ok(Self {
+            repo: Arc::new(FilePersistentRepository::new(path)?),
+        })
+    }
+
+    pub fn from_repository(repo: Arc<dyn ControlPlaneRepository>) -> Self {
+        Self { repo }
+    }
+
+    pub fn repository(&self) -> &Arc<dyn ControlPlaneRepository> {
+        &self.repo
     }
 
     /// Verifies that OidcClaims allow access to target_tenant_id.
@@ -93,15 +121,9 @@ impl ControlPlaneService {
             ));
         }
 
-        let mut tenants = self.tenants.write().await;
-        if tenants.values().any(|t| t.slug == slug) {
-            return Err(ServiceError::DuplicateSlug(slug));
-        }
-
         let tenant_id = format!("ten_{}", Uuid::new_v4().simple());
-        let tenant = Tenant::new(tenant_id.clone(), name, slug, max_quota_bytes);
-        tenants.insert(tenant_id, tenant.clone());
-        Ok(tenant)
+        let tenant = Tenant::new(tenant_id, name, slug, max_quota_bytes);
+        self.repo.create_tenant(tenant)
     }
 
     pub async fn get_tenant(
@@ -110,10 +132,8 @@ impl ControlPlaneService {
         tenant_id: &str,
     ) -> Result<Tenant, ServiceError> {
         Self::verify_tenant_access(claims, tenant_id)?;
-        let tenants = self.tenants.read().await;
-        tenants
-            .get(tenant_id)
-            .cloned()
+        self.repo
+            .get_tenant(tenant_id)?
             .ok_or_else(|| ServiceError::TenantNotFound(tenant_id.to_string()))
     }
 
@@ -128,26 +148,23 @@ impl ControlPlaneService {
     ) -> Result<Device, ServiceError> {
         Self::verify_tenant_access(claims, tenant_id)?;
 
-        let mut tenants = self.tenants.write().await;
-        let tenant = tenants
-            .get_mut(tenant_id)
+        let tenant = self
+            .repo
+            .get_tenant(tenant_id)?
             .ok_or_else(|| ServiceError::TenantNotFound(tenant_id.to_string()))?;
 
         if tenant.status != TenantStatus::Active {
             return Err(ServiceError::TenantInactive(tenant_id.to_string()));
         }
 
-        let mut devices = self.devices.write().await;
-        if devices
-            .values()
-            .any(|d| d.tenant_id == tenant_id && d.peer_id == peer_id)
-        {
+        let devices = self.repo.list_devices_by_tenant(tenant_id)?;
+        if devices.iter().any(|d| d.peer_id == peer_id) {
             return Err(ServiceError::DuplicateDevice(peer_id.to_string()));
         }
 
         let allocated_bytes: u64 = devices
-            .values()
-            .filter(|d| d.tenant_id == tenant_id && d.status != DeviceStatus::Revoked)
+            .iter()
+            .filter(|d| d.status != DeviceStatus::Revoked)
             .map(|d| d.quota_bytes)
             .sum();
 
@@ -161,7 +178,7 @@ impl ControlPlaneService {
 
         let device_id = format!("dev_{}", Uuid::new_v4().simple());
         let device = Device::new(
-            device_id.clone(),
+            device_id,
             tenant_id.to_string(),
             peer_id.to_string(),
             device_name.to_string(),
@@ -169,8 +186,7 @@ impl ControlPlaneService {
             quota_bytes,
         );
 
-        devices.insert(device_id, device.clone());
-        Ok(device)
+        self.repo.register_device(device)
     }
 
     pub async fn list_devices(
@@ -179,14 +195,7 @@ impl ControlPlaneService {
         tenant_id: &str,
     ) -> Result<Vec<Device>, ServiceError> {
         Self::verify_tenant_access(claims, tenant_id)?;
-
-        let devices = self.devices.read().await;
-        let tenant_devices = devices
-            .values()
-            .filter(|d| d.tenant_id == tenant_id)
-            .cloned()
-            .collect();
-        Ok(tenant_devices)
+        self.repo.list_devices_by_tenant(tenant_id)
     }
 
     pub async fn update_device_heartbeat(
@@ -195,9 +204,9 @@ impl ControlPlaneService {
         device_id: &str,
         storage_used_bytes: u64,
     ) -> Result<Device, ServiceError> {
-        let mut devices = self.devices.write().await;
-        let device = devices
-            .get_mut(device_id)
+        let mut device = self
+            .repo
+            .get_device(device_id)?
             .ok_or_else(|| ServiceError::DeviceNotFound(device_id.to_string()))?;
 
         if device.tenant_id != tenant_id {
@@ -210,11 +219,10 @@ impl ControlPlaneService {
         let old_used = device.storage_used_bytes;
         device.last_heartbeat = Utc::now();
         device.storage_used_bytes = storage_used_bytes;
-        let cloned_dev = device.clone();
+        let updated_dev = self.repo.update_device(device)?;
 
         // Update aggregated tenant usage
-        let mut tenants = self.tenants.write().await;
-        if let Some(tenant) = tenants.get_mut(tenant_id) {
+        if let Some(mut tenant) = self.repo.get_tenant(tenant_id)? {
             if storage_used_bytes >= old_used {
                 tenant.current_used_bytes += storage_used_bytes - old_used;
             } else {
@@ -223,9 +231,10 @@ impl ControlPlaneService {
                     .saturating_sub(old_used - storage_used_bytes);
             }
             tenant.updated_at = Utc::now();
+            let _ = self.repo.update_tenant(tenant);
         }
 
-        Ok(cloned_dev)
+        Ok(updated_dev)
     }
 
     pub async fn update_device_status(
@@ -242,9 +251,9 @@ impl ControlPlaneService {
             ));
         }
 
-        let mut devices = self.devices.write().await;
-        let device = devices
-            .get_mut(device_id)
+        let mut device = self
+            .repo
+            .get_device(device_id)?
             .ok_or_else(|| ServiceError::DeviceNotFound(device_id.to_string()))?;
 
         if device.tenant_id != tenant_id {
@@ -255,7 +264,7 @@ impl ControlPlaneService {
         }
 
         device.status = status;
-        Ok(device.clone())
+        self.repo.update_device(device)
     }
 
     pub async fn create_invite(
@@ -271,9 +280,9 @@ impl ControlPlaneService {
             ));
         }
 
-        let tenants = self.tenants.read().await;
-        let tenant = tenants
-            .get(tenant_id)
+        let tenant = self
+            .repo
+            .get_tenant(tenant_id)?
             .ok_or_else(|| ServiceError::TenantNotFound(tenant_id.to_string()))?;
 
         if tenant.status != TenantStatus::Active {
@@ -287,7 +296,7 @@ impl ControlPlaneService {
         let expires_at = now + Duration::seconds(duration_secs as i64);
 
         let invite = Invite {
-            invite_id: invite_id.clone(),
+            invite_id,
             tenant_id: tenant_id.to_string(),
             created_by_sub: claims.sub.clone(),
             invitation_token,
@@ -298,9 +307,7 @@ impl ControlPlaneService {
             created_at: now,
         };
 
-        let mut invites = self.invites.write().await;
-        invites.insert(invite_id, invite.clone());
-        Ok(invite)
+        self.repo.create_invite(invite)
     }
 
     pub async fn consume_invite(
@@ -311,67 +318,13 @@ impl ControlPlaneService {
         device_type: DeviceType,
         quota_bytes: u64,
     ) -> Result<Device, ServiceError> {
-        let mut invites = self.invites.write().await;
-        let invite = invites
-            .values_mut()
-            .find(|inv| inv.invitation_token == invitation_token)
-            .ok_or_else(|| ServiceError::InviteNotFound(invitation_token.to_string()))?;
-
-        if invite.consumed {
-            return Err(ServiceError::InviteAlreadyConsumed);
-        }
-        if Utc::now() >= invite.expires_at {
-            return Err(ServiceError::InviteExpired);
-        }
-
-        let tenant_id = invite.tenant_id.clone();
-        let mut tenants = self.tenants.write().await;
-        let tenant = tenants
-            .get_mut(&tenant_id)
-            .ok_or_else(|| ServiceError::TenantNotFound(tenant_id.clone()))?;
-
-        if tenant.status != TenantStatus::Active {
-            return Err(ServiceError::TenantInactive(tenant_id.clone()));
-        }
-
-        let mut devices = self.devices.write().await;
-        if devices
-            .values()
-            .any(|d| d.tenant_id == tenant_id && d.peer_id == peer_id)
-        {
-            return Err(ServiceError::DuplicateDevice(peer_id.to_string()));
-        }
-
-        let allocated_bytes: u64 = devices
-            .values()
-            .filter(|d| d.tenant_id == tenant_id && d.status != DeviceStatus::Revoked)
-            .map(|d| d.quota_bytes)
-            .sum();
-
-        let available = tenant.max_quota_bytes.saturating_sub(allocated_bytes);
-        if quota_bytes > available {
-            return Err(ServiceError::QuotaExceeded {
-                requested: quota_bytes,
-                available,
-            });
-        }
-
-        // Mark invite as consumed
-        invite.consumed = true;
-        invite.consumed_by_peer_id = Some(peer_id.to_string());
-
-        let device_id = format!("dev_{}", Uuid::new_v4().simple());
-        let device = Device::new(
-            device_id.clone(),
-            tenant_id,
-            peer_id.to_string(),
-            device_name.to_string(),
+        self.repo.consume_invite_transactional(
+            invitation_token,
+            peer_id,
+            device_name,
             device_type,
             quota_bytes,
-        );
-
-        devices.insert(device_id, device.clone());
-        Ok(device)
+        )
     }
 
     pub async fn get_tenant_metrics(
@@ -381,16 +334,12 @@ impl ControlPlaneService {
     ) -> Result<TenantMetrics, ServiceError> {
         Self::verify_tenant_access(claims, tenant_id)?;
 
-        let tenants = self.tenants.read().await;
-        let tenant = tenants
-            .get(tenant_id)
+        let tenant = self
+            .repo
+            .get_tenant(tenant_id)?
             .ok_or_else(|| ServiceError::TenantNotFound(tenant_id.to_string()))?;
 
-        let devices = self.devices.read().await;
-        let tenant_devices: Vec<&Device> = devices
-            .values()
-            .filter(|d| d.tenant_id == tenant_id)
-            .collect();
+        let tenant_devices = self.repo.list_devices_by_tenant(tenant_id)?;
 
         let total_devices = tenant_devices.len();
         let online_devices = tenant_devices.iter().filter(|d| d.is_online(300)).count();
@@ -421,10 +370,13 @@ impl ControlPlaneService {
     }
 
     pub async fn get_peer_credit_report(&self, peer_id: &str) -> PeerCreditReport {
-        let mut credits = self.credits.write().await;
-        let ledger = credits.entry(peer_id.to_string()).or_insert_with(|| {
-            mesh_core::CreditLedger::new(peer_id.to_string(), Utc::now().timestamp() as u64)
-        });
+        let ledger = self
+            .repo
+            .get_credit_ledger(peer_id)
+            .unwrap_or(None)
+            .unwrap_or_else(|| {
+                mesh_core::CreditLedger::new(peer_id.to_string(), Utc::now().timestamp() as u64)
+            });
 
         let base_free = 1_073_741_824; // 1 GB free base
         let ratio = 1.0;
@@ -449,27 +401,64 @@ impl ControlPlaneService {
         consumed_delta: u64,
         audit_pass: Option<bool>,
     ) {
-        let mut credits = self.credits.write().await;
-        let ledger = credits.entry(peer_id.to_string()).or_insert_with(|| {
-            mesh_core::CreditLedger::new(peer_id.to_string(), Utc::now().timestamp() as u64)
-        });
+        let mut ledger = self
+            .repo
+            .get_credit_ledger(peer_id)
+            .unwrap_or(None)
+            .unwrap_or_else(|| {
+                mesh_core::CreditLedger::new(peer_id.to_string(), Utc::now().timestamp() as u64)
+            });
 
         if contributed_delta > 0 {
             ledger.record_storage_contribution(contributed_delta);
+            let _ = self.repo.record_credit_event(CreditLedgerEvent {
+                event_id: format!("cred_{}", Uuid::new_v4().simple()),
+                tenant_id: "global".into(),
+                peer_id: peer_id.to_string(),
+                delta: contributed_delta as i64,
+                reason: "storage_contribution".into(),
+                timestamp: Utc::now(),
+            });
         }
         if consumed_delta > 0 {
             ledger.record_storage_consumption(consumed_delta);
+            let _ = self.repo.record_credit_event(CreditLedgerEvent {
+                event_id: format!("cred_{}", Uuid::new_v4().simple()),
+                tenant_id: "global".into(),
+                peer_id: peer_id.to_string(),
+                delta: -(consumed_delta as i64),
+                reason: "storage_consumption".into(),
+                timestamp: Utc::now(),
+            });
         }
         if let Some(passed) = audit_pass {
             ledger.record_audit(passed);
         }
+
+        let _ = self.repo.update_credit_ledger(peer_id, ledger);
     }
 
     pub async fn get_system_metrics(&self) -> (usize, usize, u64, usize) {
-        let tenants = self.tenants.read().await;
-        let devices = self.devices.read().await;
-        let credits = self.credits.read().await;
-        let total_quota: u64 = tenants.values().map(|t| t.max_quota_bytes).sum();
-        (tenants.len(), devices.len(), total_quota, credits.len())
+        let tenants = self.repo.list_tenants().unwrap_or_default();
+        let total_quota: u64 = tenants.iter().map(|t| t.max_quota_bytes).sum();
+        let snapshot = self.repo.export_snapshot().unwrap_or_default();
+        (
+            tenants.len(),
+            snapshot.devices.len(),
+            total_quota,
+            snapshot.credits.len(),
+        )
+    }
+
+    pub async fn export_backup(&self) -> Result<String, ServiceError> {
+        let snapshot = self.repo.export_snapshot()?;
+        serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| ServiceError::Internal(format!("Failed to serialize backup: {}", e)))
+    }
+
+    pub async fn restore_backup(&self, json_data: &str) -> Result<(), ServiceError> {
+        let snapshot: ControlPlaneSnapshot = serde_json::from_str(json_data)
+            .map_err(|e| ServiceError::Internal(format!("Invalid backup format: {}", e)))?;
+        self.repo.import_snapshot(snapshot)
     }
 }

@@ -34,40 +34,38 @@ The system consists of the following components:
            └─────────────────────────┘       └─────────────────────────┘
 ```
 
-1. **`/core`**: Core library implementing:
-   * **FastCDC** (Content-Defined Chunking) to chunk files with a ~2MB target size.
-   * **Reed-Solomon** erasure coding ($k$ data + $m$ parity shards).
-   * **AES-256-GCM** data-at-rest encryption using Argon2id master keys and deterministic IV derivation via HKDF-SHA256 (prevents hash/CID mutation on repair).
-   * **Merkle DAG** verification for tamper-proof chunk and shard integrity checks.
-2. **`/node`**: Core daemon wrapping the `/core` logic with networking:
-   * **Axum REST API** for status, list peers, upload, download, and pairing.
-   * **libp2p Network Behaviour** with mDNS (auto-discovery), Kademlia DHT (routing), Gossipsub (event notifications), Ping, Identify, and a custom JSON Request-Response protocol for transfers and audits.
-   * **Access Control & Anti-Flood**: Checks connections against a `trusted_peers.json` allowlist. Exceeding 5 connection attempts in 60s from an untrusted IP triggers a 30-minute in-memory ban and spawns a Windows Firewall rule (`netsh advfirewall`) to block the brute-forcer.
+1. **`/core`**: Pure Rust storage engine:
+   * **FastCDC**: Content-Defined Chunking with bounded memory streaming.
+   * **Reed-Solomon**: Erasure coding ($k$ data + $m$ parity shards).
+   * **AES-256-GCM + Argon2id**: Deterministic IV derivation (`derive_shard_iv`) preventing CID mutation on repair.
+   * **Merkle DAG**: Cryptographic chunk and shard integrity checks.
+   * **Proof-of-Storage Auditing**: Merkle chunk challenge/response protocol.
+   * **Automated Shard Repair**: Zero-knowledge deterministic reconstruction of degraded chunks.
+   * **Reciprocity Credits & Sybil Defense**: 4-tier reciprocity accounting and subnet density limits.
+   * **Disaster Recovery Backup**: Authenticated `.mbak` backup creation and restoration.
+2. **`/node`**: Canonical P2P daemon and REST gateway:
+   * **Axum REST API**: Status, peer registry, quotas, bandwidth limits, upload, download, repair, DR backup, and Prometheus `/metrics`.
+   * **Embedded Web UI**: Serves `dashboard.html` on `GET /` and `GET /dashboard`.
+   * **libp2p Swarm**: Relay v2, AutoNAT, mDNS, Kademlia DHT, Gossipsub, Ping, and Identify.
+3. **`/android-bridge`**: JNI C-ABI foreign function interface for Android Kotlin/Compose integration.
+4. **`/control-plane`**: Multi-tenant SaaS authority with OIDC claims, organization isolation, and device lifecycle management.
+5. **`/mesh-cli`**: Full-featured command-line client (`status`, `peers`, `invite`, `upload`, `download`, `quota`, `bandwidth`, `credits`, `repair-check`, `backup`, `metrics`, `pause`, `resume`, `leave`).
+6. **`/terminal-ui`**: Live interactive terminal dashboard with ANSI telemetry gauges.
 
 ---
 
 ## Directory Structure
 
 ```
-├── core/                       # Pure logic Rust library
-│   ├── src/
-│   │   ├── chunking.rs         # FastCDC content-defined chunking implementation
-│   │   ├── crypto.rs           # Encryption (AES-GCM-256, Argon2id, HKDF)
-│   │   ├── erasure.rs          # Reed-Solomon shard encoding/decoding wrapper
-│   │   ├── merkle.rs           # Merkle tree building & verification
-│   │   └── lib.rs              # Library exports and milestone tests
-│   └── Cargo.toml
-│
-├── node/                       # Rust executable: P2P Node & Axum API
-│   ├── src/
-│   │   ├── main.rs             # Application entrypoint & CLI argument parsing
-│   │   ├── state.rs            # Node state, trusted peers, storage tracking
-│   │   ├── network.rs          # Swarm management, protocols, commands, uploads/downloads
-│   │   └── api.rs              # Axum HTTP server endpoints
-│   └── Cargo.toml
-│
-├── mesh-cli/                   # Command Line tool wrapping Node status API (stub)
-├── terminal-ui/                # Ratatui dashboard stub
+├── core/                       # Pure logic Rust library (crypto, erasure, merkle, credits, backup)
+├── node/                       # Canonical libp2p Node daemon & Axum REST API server
+├── android-bridge/             # JNI C-ABI bridge for Android Kotlin integration
+├── control-plane/              # SaaS multi-tenant control plane service
+├── mesh-cli/                   # Operator command-line client
+├── terminal-ui/                # Real-time ANSI terminal telemetry dashboard
+├── android/                    # Android application shell (Kotlin / Jetpack Compose)
+├── dashboard.html              # Dark glassmorphic enterprise web monitoring interface
+├── RELEASE_CHECKLIST.md        # Production gate and verification checklist
 ├── Cargo.toml                  # Cargo workspace definition
 └── Cargo.lock
 ```

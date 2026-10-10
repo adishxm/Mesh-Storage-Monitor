@@ -3,20 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mesh Storage Monitor</title>
+    <title>Mesh Storage Monitor — Enterprise P2P Cloud</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         :root {
-            --bg-color: #080710;
-            --card-bg: rgba(17, 16, 29, 0.65);
+            --bg-color: #07070d;
+            --surface-bg: rgba(16, 15, 28, 0.75);
+            --surface-hover: rgba(26, 25, 42, 0.85);
             --card-border: rgba(255, 255, 255, 0.08);
+            --card-border-glow: rgba(168, 85, 247, 0.3);
             --primary-grad: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
-            --glow-green: 0 0 20px rgba(16, 185, 129, 0.4);
-            --glow-red: 0 0 20px rgba(239, 68, 68, 0.4);
-            --glow-purple: 0 0 25px rgba(168, 85, 247, 0.35);
+            --accent-cyan: #06b6d4;
+            --accent-emerald: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-rose: #f43f5e;
+            --glow-green: 0 0 25px rgba(16, 185, 129, 0.35);
+            --glow-purple: 0 0 30px rgba(168, 85, 247, 0.3);
+            --glow-cyan: 0 0 25px rgba(6, 182, 212, 0.3);
+            --glow-rose: 0 0 25px rgba(244, 63, 94, 0.3);
         }
 
         * {
@@ -25,7 +32,7 @@
             padding: 0;
             font-family: 'Plus Jakarta Sans', sans-serif;
             scrollbar-width: thin;
-            scrollbar-color: rgba(255,255,255,0.1) transparent;
+            scrollbar-color: rgba(255,255,255,0.15) transparent;
         }
 
         body {
@@ -34,8 +41,9 @@
             min-height: 100vh;
             overflow-x: hidden;
             background-image: 
-                radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.1) 0%, transparent 40%),
-                radial-gradient(circle at 90% 80%, rgba(236, 72, 153, 0.1) 0%, transparent 40%);
+                radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.12) 0%, transparent 45%),
+                radial-gradient(circle at 85% 85%, rgba(236, 72, 153, 0.1) 0%, transparent 45%),
+                radial-gradient(circle at 50% 50%, rgba(6, 182, 212, 0.05) 0%, transparent 60%);
             background-attachment: fixed;
         }
 
@@ -43,10 +51,10 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 24px 5%;
+            padding: 20px 4%;
             border-bottom: 1px solid var(--card-border);
-            backdrop-filter: blur(12px);
-            background: rgba(8, 7, 16, 0.7);
+            backdrop-filter: blur(16px);
+            background: rgba(7, 7, 13, 0.85);
             position: sticky;
             top: 0;
             z-index: 100;
@@ -55,25 +63,55 @@
         .logo-section {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 14px;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            padding: 7px;
+            background: var(--primary-grad);
+            border-radius: 10px;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: var(--glow-purple);
         }
 
         .logo-text {
             font-family: 'Outfit', sans-serif;
-            font-size: 24px;
-            font-weight: 700;
+            font-size: 22px;
+            font-weight: 800;
             background: var(--primary-grad);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             letter-spacing: -0.5px;
         }
 
+        .version-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            color: #a855f7;
+            background: rgba(168, 85, 247, 0.12);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            padding: 2px 8px;
+            border-radius: 6px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
         .node-connector {
             display: flex;
             align-items: center;
-            gap: 12px;
-            background: rgba(255, 255, 255, 0.05);
-            padding: 8px 16px;
+            gap: 10px;
+            background: rgba(255, 255, 255, 0.04);
+            padding: 6px 14px;
             border-radius: 12px;
             border: 1px solid var(--card-border);
         }
@@ -82,9 +120,10 @@
             background: transparent;
             border: none;
             color: #fff;
-            font-size: 14px;
-            width: 200px;
+            font-size: 13px;
+            width: 190px;
             outline: none;
+            font-family: 'JetBrains Mono', monospace;
         }
 
         .node-connector button {
@@ -95,8 +134,8 @@
             border-radius: 8px;
             cursor: pointer;
             font-weight: 600;
-            font-size: 13px;
-            transition: all 0.3s ease;
+            font-size: 12px;
+            transition: all 0.25s ease;
         }
 
         .node-connector button:hover {
@@ -104,224 +143,356 @@
             transform: translateY(-1px);
         }
 
-        .container {
-            max-width: 1400px;
-            margin: 40px auto;
+        .lifecycle-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .lifecycle-btn {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--card-border);
+            color: #e5e7eb;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .lifecycle-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .lifecycle-btn.danger:hover {
+            background: rgba(244, 63, 94, 0.2);
+            border-color: var(--accent-rose);
+            color: #fca5a5;
+        }
+
+        /* Top Metric Cards */
+        .metrics-row {
+            max-width: 1440px;
+            margin: 28px auto 0;
             padding: 0 24px;
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 32px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
         }
 
-        @media (max-width: 1024px) {
-            .container {
-                grid-template-columns: 1fr;
-            }
+        @media (max-width: 1200px) {
+            .metrics-row { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 640px) {
+            .metrics-row { grid-template-columns: 1fr; }
         }
 
-        .card {
-            background: var(--card-bg);
+        .kpi-card {
+            background: var(--surface-bg);
             border: 1px solid var(--card-border);
-            border-radius: 24px;
-            padding: 32px;
+            border-radius: 20px;
+            padding: 22px;
             backdrop-filter: blur(16px);
             position: relative;
             overflow: hidden;
-            transition: transform 0.3s ease, border-color 0.3s ease;
+            transition: transform 0.25s ease, border-color 0.25s ease;
         }
 
-        .card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 4px;
-            background: var(--primary-grad);
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .card:hover {
-            border-color: rgba(255, 255, 255, 0.15);
+        .kpi-card:hover {
+            border-color: var(--card-border-glow);
             transform: translateY(-2px);
         }
 
-        .card:hover::before {
-            opacity: 1;
+        .kpi-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .kpi-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+
+        .kpi-icon {
+            width: 28px;
+            height: 28px;
+            padding: 5px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .kpi-value {
+            font-family: 'Outfit', sans-serif;
+            font-size: 26px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: -0.5px;
+            margin-bottom: 6px;
+        }
+
+        .kpi-subtext {
+            font-size: 12px;
+            color: #9ca3af;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Container Layout */
+        .container {
+            max-width: 1440px;
+            margin: 24px auto 40px;
+            padding: 0 24px;
+            display: grid;
+            grid-template-columns: 1.05fr 1.15fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 1100px) {
+            .container { grid-template-columns: 1fr; }
+        }
+
+        .column {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .card {
+            background: var(--surface-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 26px;
+            backdrop-filter: blur(16px);
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.25s ease;
+        }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.14);
         }
 
         .card-title {
             font-family: 'Outfit', sans-serif;
-            font-size: 20px;
-            font-weight: 600;
-            margin-bottom: 24px;
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 20px;
             display: flex;
             align-items: center;
-            gap: 12px;
+            justify-content: space-between;
             color: #fff;
+        }
+
+        .card-title-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
         .card-title i {
             color: #a855f7;
+            width: 20px;
+            height: 20px;
         }
 
-        /* Status Widget */
-        .status-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
+        /* Status Badges */
         .status-badge {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 8px;
+            gap: 7px;
             font-weight: 700;
-            font-size: 14px;
+            font-size: 12px;
             text-transform: uppercase;
-            padding: 6px 14px;
+            padding: 5px 12px;
             border-radius: 50px;
-            background: rgba(239, 68, 68, 0.1);
-            color: #ef4444;
-            transition: all 0.3s ease;
+            background: rgba(244, 63, 94, 0.15);
+            color: #f43f5e;
+            border: 1px solid rgba(244, 63, 94, 0.3);
+            letter-spacing: 0.5px;
         }
 
         .status-badge.online {
             background: rgba(16, 185, 129, 0.15);
             color: #10b981;
+            border-color: rgba(16, 185, 129, 0.3);
             box-shadow: var(--glow-green);
         }
 
+        .status-badge.paused {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+            border-color: rgba(245, 158, 11, 0.3);
+        }
+
         .status-badge .dot {
-            width: 8px;
-            height: 8px;
+            width: 7px;
+            height: 7px;
             border-radius: 50%;
             background: currentColor;
             display: inline-block;
         }
 
         .status-badge.online .dot {
-            animation: pulse 1.5s infinite;
+            animation: pulseDot 1.5s infinite;
         }
 
-        @keyframes pulse {
+        @keyframes pulseDot {
             0% { transform: scale(0.9); opacity: 0.6; }
             50% { transform: scale(1.3); opacity: 1; }
             100% { transform: scale(0.9); opacity: 0.6; }
         }
 
+        /* Tier Badges */
+        .tier-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+
+        .tier-1 { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .tier-2 { background: rgba(6, 182, 212, 0.15); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.3); }
+        .tier-3 { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .tier-4 { background: rgba(244, 63, 94, 0.15); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.3); }
+
+        /* Grids & Item Box */
         .info-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 16px;
-            margin-bottom: 24px;
+            gap: 14px;
+            margin-bottom: 20px;
         }
 
         .info-item {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255,255,255,0.04);
-            border-radius: 16px;
-            padding: 16px;
+            background: rgba(255, 255, 255, 0.025);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 14px;
+            padding: 14px 16px;
         }
 
         .info-label {
-            font-size: 12px;
+            font-size: 11px;
             color: #9ca3af;
             text-transform: uppercase;
             margin-bottom: 6px;
-            font-weight: 600;
+            font-weight: 700;
             letter-spacing: 0.5px;
         }
 
         .info-value {
-            font-size: 15px;
-            font-weight: 500;
-            word-break: break-all;
+            font-size: 14px;
+            font-weight: 600;
             color: #fff;
+            word-break: break-all;
         }
 
-        /* Storage Progress */
-        .storage-progress-container {
-            margin-top: 16px;
+        .mono-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
         }
 
-        .storage-progress-bar {
+        /* Progress Bar */
+        .progress-bar-wrap {
+            margin-top: 10px;
+        }
+
+        .progress-bar-bg {
             width: 100%;
-            height: 10px;
-            background: rgba(255, 255, 255, 0.05);
+            height: 8px;
+            background: rgba(255, 255, 255, 0.06);
             border-radius: 50px;
-            margin: 8px 0;
             overflow: hidden;
         }
 
-        .storage-progress-fill {
+        .progress-bar-fill {
             height: 100%;
             width: 0%;
             background: var(--primary-grad);
             border-radius: 50px;
-            transition: width 0.8s ease;
+            transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         /* Lists */
         .list-container {
-            max-height: 200px;
+            max-height: 190px;
             overflow-y: auto;
             border: 1px solid rgba(255,255,255,0.05);
             border-radius: 12px;
-            background: rgba(0,0,0,0.2);
-            padding: 8px;
+            background: rgba(0, 0, 0, 0.25);
+            padding: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
         }
 
         .list-item {
-            font-size: 13px;
+            font-size: 12px;
             padding: 8px 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.03);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.02);
             display: flex;
             align-items: center;
             justify-content: space-between;
             color: #d1d5db;
+            transition: background 0.2s;
         }
 
-        .list-item:last-child {
-            border-bottom: none;
+        .list-item:hover {
+            background: rgba(255, 255, 255, 0.05);
         }
 
         /* Forms */
         .form-group {
-            margin-bottom: 18px;
+            margin-bottom: 14px;
         }
 
         .form-row {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 16px;
+            gap: 12px;
         }
 
         label {
             display: block;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
-            color: #d1d5db;
-            margin-bottom: 8px;
+            color: #cbd5e1;
+            margin-bottom: 6px;
         }
 
         input[type="text"], input[type="number"], input[type="password"], select, input[type="file"] {
             width: 100%;
-            background: rgba(255, 255, 255, 0.04);
+            background: rgba(255, 255, 255, 0.035);
             border: 1px solid rgba(255, 255, 255, 0.1);
             color: #fff;
-            padding: 12px 16px;
-            border-radius: 12px;
+            padding: 10px 14px;
+            border-radius: 10px;
             outline: none;
-            font-size: 14px;
-            transition: border-color 0.3s, background 0.3s;
+            font-size: 13px;
+            transition: border-color 0.2s, background 0.2s;
         }
 
         input:focus, select:focus {
             border-color: #a855f7;
-            background: rgba(255, 255, 255, 0.07);
+            background: rgba(255, 255, 255, 0.06);
         }
 
         .submit-btn {
@@ -329,12 +500,12 @@
             background: var(--primary-grad);
             color: #fff;
             border: none;
-            padding: 14px;
-            border-radius: 12px;
-            font-size: 15px;
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 14px;
             font-weight: 700;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: all 0.25s ease;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -347,35 +518,55 @@
         }
 
         .submit-btn:disabled {
-            background: rgba(255, 255, 255, 0.1);
-            color: rgba(255,255,255,0.3);
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.35);
             cursor: not-allowed;
             box-shadow: none;
             transform: none;
         }
 
-        /* Toast notifications */
+        .secondary-btn {
+            background: rgba(255, 255, 255, 0.06);
+            color: #e2e8f0;
+            border: 1px solid var(--card-border);
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .secondary-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Toast Notifications */
         .toast-container {
             position: fixed;
-            bottom: 30px;
-            right: 30px;
+            bottom: 24px;
+            right: 24px;
             z-index: 1000;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 10px;
         }
 
         .toast {
-            background: rgba(17, 16, 29, 0.95);
-            border: 1px solid rgba(255,255,255,0.1);
-            padding: 16px 24px;
-            border-radius: 16px;
+            background: rgba(16, 15, 28, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 14px 20px;
+            border-radius: 12px;
             color: #fff;
-            font-size: 14px;
+            font-size: 13px;
             display: flex;
             align-items: center;
-            gap: 12px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            gap: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
             animation: slideIn 0.3s ease forwards;
         }
 
@@ -384,125 +575,322 @@
             to { transform: translateX(0); opacity: 1; }
         }
 
-        .toast.success { border-left: 4px solid #10b981; }
-        .toast.error { border-left: 4px solid #ef4444; }
+        .toast.success { border-left: 4px solid var(--accent-emerald); }
+        .toast.error { border-left: 4px solid var(--accent-rose); }
+        .toast.info { border-left: 4px solid var(--accent-cyan); }
 
-        /* Loader */
+        /* Spinner */
         .spinner {
-            animation: rotate 2s linear infinite;
-            width: 20px;
-            height: 20px;
+            animation: rotate 1.8s linear infinite;
+            width: 18px;
+            height: 18px;
         }
         @keyframes rotate {
             100% { transform: rotate(360deg); }
+        }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-card {
+            background: #11101d;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 20px;
+            width: 90%;
+            max-width: 500px;
+            padding: 28px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .close-btn {
+            background: transparent;
+            border: none;
+            color: #9ca3af;
+            cursor: pointer;
+            font-size: 20px;
         }
     </style>
 </head>
 <body>
 
+    <!-- Header -->
     <header>
         <div class="logo-section">
-            <i data-lucide="shield-alert" style="color: #a855f7; width: 30px; height: 30px;"></i>
-            <span class="logo-text">MESH STORAGE MONITOR</span>
+            <div class="logo-icon">
+                <i data-lucide="shield-check" style="width: 22px; height: 22px;"></i>
+            </div>
+            <div>
+                <span class="logo-text">MESH STORAGE MONITOR</span>
+                <span class="version-badge">v0.9-alpha</span>
+            </div>
         </div>
-        <div class="node-connector">
-            <i data-lucide="network" style="color: #9ca3af; width: 18px;"></i>
-            <input type="text" id="node-url" value="http://localhost:3000" placeholder="Node API URL">
-            <button onclick="updateNodeUrl()">Connect</button>
+
+        <div class="header-actions">
+            <!-- Node lifecycle control -->
+            <div class="lifecycle-bar">
+                <button class="lifecycle-btn" onclick="pauseNode()" title="Pause storage traffic">
+                    <i data-lucide="pause-circle" style="width: 15px;"></i>
+                    <span>Pause</span>
+                </button>
+                <button class="lifecycle-btn" onclick="resumeNode()" title="Resume normal traffic">
+                    <i data-lucide="play-circle" style="width: 15px;"></i>
+                    <span>Resume</span>
+                </button>
+                <button class="lifecycle-btn danger" onclick="leaveMesh()" title="Graceful network departure">
+                    <i data-lucide="log-out" style="width: 15px;"></i>
+                    <span>Leave</span>
+                </button>
+            </div>
+
+            <!-- Node Connector -->
+            <div class="node-connector">
+                <i data-lucide="radio" style="color: #9ca3af; width: 16px;"></i>
+                <input type="text" id="node-url" value="http://localhost:3000" placeholder="Node API URL">
+                <button onclick="updateNodeUrl()">Connect</button>
+            </div>
         </div>
     </header>
 
-    <div class="container">
-        <!-- Node status & stats -->
-        <div class="card">
-            <div class="status-header">
-                <div class="card-title">
-                    <i data-lucide="cpu"></i>
-                    <span>Node Status</span>
+    <!-- Top KPI Cards -->
+    <div class="metrics-row">
+        <!-- 1: Node State & ID -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Node Network State</span>
+                <div class="kpi-icon" style="background: rgba(168, 85, 247, 0.15); color: #a855f7;">
+                    <i data-lucide="server" style="width: 16px;"></i>
                 </div>
-                <div id="status-badge" class="status-badge">
-                    <span class="dot"></span>
-                    <span id="status-text">OFFLINE</span>
+            </div>
+            <div id="status-badge" class="status-badge">
+                <span class="dot"></span>
+                <span id="status-text">OFFLINE</span>
+            </div>
+            <div class="kpi-subtext" style="margin-top: 10px;">
+                <span style="font-size: 11px;">Peer:</span>
+                <span id="peer-id-short" class="mono-val" style="color: #e5e7eb;">—</span>
+            </div>
+        </div>
+
+        <!-- 2: Reciprocity Tier -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Reciprocity Tier</span>
+                <div class="kpi-icon" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">
+                    <i data-lucide="award" style="width: 16px;"></i>
+                </div>
+            </div>
+            <div id="reciprocity-tier-badge" class="tier-badge tier-1">
+                <i data-lucide="shield" style="width: 12px;"></i>
+                <span id="reciprocity-tier-text">TIER 1 UNRESTRICTED</span>
+            </div>
+            <div class="kpi-subtext" style="margin-top: 10px;">
+                <span>Fair Share:</span>
+                <strong id="fair-share-ratio" style="color: #10b981;">1.00x</strong>
+            </div>
+        </div>
+
+        <!-- 3: Credit Balance & Contributed -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Credits Contributed</span>
+                <div class="kpi-icon" style="background: rgba(6, 182, 212, 0.15); color: #06b6d4;">
+                    <i data-lucide="database" style="width: 16px;"></i>
+                </div>
+            </div>
+            <div class="kpi-value" id="bytes-contributed">0 B</div>
+            <div class="kpi-subtext">
+                <span>Consumed:</span>
+                <span id="bytes-consumed">0 B</span>
+            </div>
+        </div>
+
+        <!-- 4: Storage Allocation -->
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Storage Quota</span>
+                <div class="kpi-icon" style="background: rgba(236, 72, 153, 0.15); color: #ec4899;">
+                    <i data-lucide="hard-drive" style="width: 16px;"></i>
+                </div>
+            </div>
+            <div class="kpi-value" id="storage-used-display">0 B</div>
+            <div class="progress-bar-wrap">
+                <div class="progress-bar-bg">
+                    <div id="storage-progress-fill" class="progress-bar-fill"></div>
+                </div>
+            </div>
+            <div class="kpi-subtext" style="margin-top: 6px;">
+                <span>Quota limit:</span>
+                <span id="storage-quota-display">0 B</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- LEFT COLUMN: Telemetry, Peers, Shards, Governance -->
+        <div class="column">
+            <!-- Node Telemetry Overview -->
+            <div class="card">
+                <div class="card-title">
+                    <div class="card-title-left">
+                        <i data-lucide="activity"></i>
+                        <span>Node Telemetry & Addresses</span>
+                    </div>
+                </div>
+
+                <div class="info-grid">
+                    <div class="info-item" style="grid-column: span 2;">
+                        <div class="info-label">Full Peer ID</div>
+                        <div id="peer-id-full" class="info-value mono-val">—</div>
+                    </div>
+                    <div class="info-item" style="grid-column: span 2;">
+                        <div class="info-label">P2P Listen Address</div>
+                        <div id="listen-addr" class="info-value mono-val">—</div>
+                    </div>
+                </div>
+
+                <!-- Reciprocity Ledger Details -->
+                <div class="card-title" style="margin-top: 14px; font-size: 15px;">
+                    <div class="card-title-left">
+                        <i data-lucide="scale" style="width: 17px;"></i>
+                        <span>Reciprocity Ledger & Sybil Defense</span>
+                    </div>
+                </div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Storage Allowance</div>
+                        <div id="earned-allowance" class="info-value">0 B</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Net Credit Balance</div>
+                        <div id="credit-balance" class="info-value mono-val">+0</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Proof Audits Passed</div>
+                        <div id="audits-passed" class="info-value" style="color: #10b981;">0</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Proof Audits Failed</div>
+                        <div id="audits-failed" class="info-value" style="color: #f43f5e;">0</div>
+                    </div>
                 </div>
             </div>
 
-            <div class="info-grid">
-                <div class="info-item" style="grid-column: span 2;">
-                    <div class="info-label">Peer ID</div>
-                    <div id="peer-id" class="info-value">-</div>
+            <!-- Connected Peers & Reliability -->
+            <div class="card">
+                <div class="card-title">
+                    <div class="card-title-left">
+                        <i data-lucide="users"></i>
+                        <span>Connected & Trusted Peers</span>
+                    </div>
+                    <span id="peers-count" class="mono-val" style="font-size: 12px; color: #9ca3af;">0 active</span>
                 </div>
-                <div class="info-item">
-                    <div class="info-label">Listen Address</div>
-                    <div id="listen-addr" class="info-value">-</div>
+                <div class="list-container" id="peers-list">
+                    <div class="list-item" style="justify-content: center; color: #6b7280;">No peers connected.</div>
                 </div>
-                <div class="info-item">
-                    <div class="info-label">Storage Usage</div>
-                    <div id="storage-value" class="info-value">0 GB / 0 GB</div>
-                    <div class="storage-progress-container">
-                        <div class="storage-progress-bar">
-                            <div id="storage-progress-fill" class="storage-progress-fill"></div>
+
+                <!-- Direct Multiaddress Pairing -->
+                <div style="margin-top: 18px;">
+                    <label for="peer-multiaddr">Pair New Peer Multiaddress</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="peer-multiaddr" placeholder="/ip4/192.168.1.15/tcp/4001/p2p/12D3KooW..." class="mono-val">
+                        <button class="secondary-btn" id="pair-btn" onclick="pairPeer(event)" style="white-space: nowrap;">
+                            <i data-lucide="link-2" style="width: 15px;"></i>
+                            <span>Pair</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Locally Stored Shards -->
+            <div class="card">
+                <div class="card-title">
+                    <div class="card-title-left">
+                        <i data-lucide="layers"></i>
+                        <span>Locally Stored Shards</span>
+                    </div>
+                    <span id="shards-count" class="mono-val" style="font-size: 12px; color: #9ca3af;">0 shards</span>
+                </div>
+                <div class="list-container" id="shards-list">
+                    <div class="list-item" style="justify-content: center; color: #6b7280;">No local shards stored.</div>
+                </div>
+            </div>
+
+            <!-- Quota & Bandwidth Throttling Governance -->
+            <div class="card">
+                <div class="card-title">
+                    <div class="card-title-left">
+                        <i data-lucide="sliders"></i>
+                        <span>Resource Governance</span>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="quota-gb-input">Set Storage Quota (GB)</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="number" id="quota-gb-input" min="0.1" step="0.5" placeholder="e.g. 5.0">
+                            <button class="secondary-btn" onclick="updateQuota()">Apply</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="bandwidth-limit-input">Bandwidth Rate (KB/s)</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="number" id="bandwidth-limit-input" min="0" step="100" placeholder="0 = unmetered">
+                            <button class="secondary-btn" onclick="updateBandwidth()">Apply</button>
                         </div>
                     </div>
                 </div>
             </div>
-
-            <div class="card-title" style="margin-top: 32px; font-size: 16px;">
-                <i data-lucide="users" style="width: 18px;"></i>
-                <span>Connected & Trusted Peers</span>
-            </div>
-            <div class="list-container" id="peers-list">
-                <div class="list-item" style="justify-content: center; color: #6b7280;">No peers connected.</div>
-            </div>
-
-            <div class="card-title" style="margin-top: 32px; font-size: 16px;">
-                <i data-lucide="database" style="width: 18px;"></i>
-                <span>Locally Stored Shards</span>
-            </div>
-            <div class="list-container" id="shards-list">
-                <div class="list-item" style="justify-content: center; color: #6b7280;">No shards stored.</div>
-            </div>
         </div>
 
-        <!-- Operations (Pair, Upload, Download) -->
-        <div style="display: flex; flex-direction: column; gap: 32px;">
-            <!-- Pairing Widget -->
+        <!-- RIGHT COLUMN: Upload, Download, Redundancy Audit, Invitations -->
+        <div class="column">
+            <!-- Upload & Sharding Studio -->
             <div class="card">
                 <div class="card-title">
-                    <i data-lucide="user-plus"></i>
-                    <span>Register / Pair Peer</span>
-                </div>
-                <form id="pair-form" onsubmit="pairPeer(event)">
-                    <div class="form-group">
-                        <label for="peer-multiaddr">Peer Multiaddress</label>
-                        <input type="text" id="peer-multiaddr" required placeholder="/ip4/192.168.1.15/tcp/4001/p2p/12D3KooW...">
+                    <div class="card-title-left">
+                        <i data-lucide="upload-cloud"></i>
+                        <span>Upload & Distribute File</span>
                     </div>
-                    <button type="submit" class="submit-btn" id="pair-btn">
-                        <i data-lucide="plus-circle" style="width: 18px;"></i>
-                        <span>Send Pairing Exchange</span>
-                    </button>
-                </form>
-            </div>
-
-            <!-- Upload Widget -->
-            <div class="card">
-                <div class="card-title">
-                    <i data-lucide="upload-cloud"></i>
-                    <span>Upload & Distribute File</span>
+                    <span class="mono-val" style="font-size: 11px; color: #a855f7;">Reed-Solomon + FastCDC</span>
                 </div>
                 <form id="upload-form" onsubmit="uploadFile(event)">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="upload-id">File ID (Name)</label>
-                            <input type="text" id="upload-id" required placeholder="my-secure-doc">
+                            <label for="upload-id">File ID (Name / Key)</label>
+                            <input type="text" id="upload-id" required placeholder="project-archive.tar">
                         </div>
                         <div class="form-group">
                             <label for="upload-pass">Passphrase</label>
-                            <input type="password" id="upload-pass" required placeholder="Master password">
+                            <input type="password" id="upload-pass" required placeholder="Master passphrase">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="upload-salt">Salt key</label>
+                            <label for="upload-salt">Salt Key</label>
                             <input type="text" id="upload-salt" required value="testsalt">
                         </div>
                         <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
@@ -517,36 +905,39 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="upload-file">Select File</label>
+                        <label for="upload-file">Select Local File</label>
                         <input type="file" id="upload-file" required>
                     </div>
                     <button type="submit" class="submit-btn" id="upload-btn">
-                        <i data-lucide="arrow-up-circle" style="width: 18px;"></i>
-                        <span>Start Encryption & Upload</span>
+                        <i data-lucide="arrow-up-circle" style="width: 17px;"></i>
+                        <span>Encrypt, Shard & Distribute</span>
                     </button>
                 </form>
             </div>
 
-            <!-- Download Widget -->
+            <!-- Download & Reconstruction Studio -->
             <div class="card">
                 <div class="card-title">
-                    <i data-lucide="download-cloud"></i>
-                    <span>Download & Reconstruct File</span>
+                    <div class="card-title-left">
+                        <i data-lucide="download-cloud"></i>
+                        <span>Download & Reconstruct</span>
+                    </div>
+                    <span class="mono-val" style="font-size: 11px; color: #06b6d4;">Galois Reconstruction</span>
                 </div>
                 <form id="download-form" onsubmit="downloadFile(event)">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="download-id">File ID (Name)</label>
-                            <input type="text" id="download-id" required placeholder="my-secure-doc">
+                            <label for="download-id">File ID to Retrieve</label>
+                            <input type="text" id="download-id" required placeholder="project-archive.tar">
                         </div>
                         <div class="form-group">
                             <label for="download-pass">Passphrase</label>
-                            <input type="password" id="download-pass" required placeholder="Master password">
+                            <input type="password" id="download-pass" required placeholder="Master passphrase">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="download-salt">Salt key</label>
+                            <label for="download-salt">Salt Key</label>
                             <input type="text" id="download-salt" required value="testsalt">
                         </div>
                         <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
@@ -561,14 +952,97 @@
                         </div>
                     </div>
                     <button type="submit" class="submit-btn" id="download-btn">
-                        <i data-lucide="arrow-down-circle" style="width: 18px;"></i>
-                        <span>Download & Reconstruct</span>
+                        <i data-lucide="arrow-down-circle" style="width: 17px;"></i>
+                        <span>Fetch Shards & Decrypt</span>
                     </button>
                 </form>
+            </div>
+
+            <!-- Self-Healing Redundancy & Repair Inspector -->
+            <div class="card">
+                <div class="card-title">
+                    <div class="card-title-left">
+                        <i data-lucide="wrench"></i>
+                        <span>Self-Healing Redundancy Inspector</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="repair-file-id">Inspect File Redundancy Health</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="repair-file-id" placeholder="Enter File ID to audit">
+                        <button class="secondary-btn" onclick="checkFileRepair()">Audit Health</button>
+                    </div>
+                </div>
+                <div id="repair-results" style="display: none; background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 14px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 13px; font-weight: 600;" id="repair-file-title">File Health</span>
+                        <span id="repair-health-badge" class="status-badge">HEALTHY</span>
+                    </div>
+                    <div style="font-size: 12px; color: #9ca3af;" id="repair-summary">No degraded chunks detected.</div>
+                </div>
+            </div>
+
+            <!-- Multi-Tenant SaaS & Cryptographic Invitations -->
+            <div class="card">
+                <div class="card-title">
+                    <div class="card-title-left">
+                        <i data-lucide="qr-code"></i>
+                        <span>Network Invitations & Multi-Tenancy</span>
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <button class="secondary-btn" style="justify-content: center;" onclick="openCreateInviteModal()">
+                        <i data-lucide="plus-circle" style="width: 15px;"></i>
+                        <span>Create Invite Token</span>
+                    </button>
+                    <button class="secondary-btn" style="justify-content: center;" onclick="openJoinInviteModal()">
+                        <i data-lucide="user-check" style="width: 15px;"></i>
+                        <span>Join via Token</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
+    <!-- Create Invite Modal -->
+    <div class="modal-overlay" id="create-invite-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 style="font-family: 'Outfit'; font-size: 18px;">Generate Cryptographic Invite</h3>
+                <button class="close-btn" onclick="closeModals()">&times;</button>
+            </div>
+            <div class="form-group">
+                <label for="invite-org-id">Organization / Tenant ID</label>
+                <input type="text" id="invite-org-id" placeholder="org-engineering">
+            </div>
+            <div class="form-group">
+                <label for="invite-duration">Duration (Seconds)</label>
+                <input type="number" id="invite-duration" value="3600">
+            </div>
+            <button class="submit-btn" onclick="submitCreateInvite()">Generate QR Payload</button>
+            <div id="invite-created-box" style="margin-top: 16px; display: none;">
+                <label>QR Payload String</label>
+                <textarea id="invite-payload-output" readonly style="width: 100%; height: 90px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 10px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px;"></textarea>
+            </div>
+        </div>
+    </div>
+
+    <!-- Join Invite Modal -->
+    <div class="modal-overlay" id="join-invite-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 style="font-family: 'Outfit'; font-size: 18px;">Join Mesh via Invite Token</h3>
+                <button class="close-btn" onclick="closeModals()">&times;</button>
+            </div>
+            <div class="form-group">
+                <label for="join-qr-input">Paste QR Payload</label>
+                <textarea id="join-qr-input" placeholder="mesh-invite:..." style="width: 100%; height: 90px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 10px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px;"></textarea>
+            </div>
+            <button class="submit-btn" onclick="submitJoinInvite()">Verify & Join Network</button>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
     <script>
@@ -578,24 +1052,23 @@
         // Initialize icons
         lucide.createIcons();
 
-        // Update URL from input
         function updateNodeUrl() {
             nodeUrl = document.getElementById("node-url").value.trim().replace(/\/$/, "");
-            showToast("Connecting to " + nodeUrl, "success");
+            showToast("Connecting to " + nodeUrl, "info");
             checkNodeStatus();
         }
 
-        // Display toast
         function showToast(message, type = "success") {
             const container = document.getElementById("toast-container");
             const toast = document.createElement("div");
             toast.className = `toast ${type}`;
             
-            let iconName = type === "success" ? "check-circle" : "x-circle";
-            toast.innerHTML = `<i data-lucide="${iconName}" style="width: 18px; color: ${type === 'success' ? '#10b981' : '#ef4444'}"></i><span>${message}</span>`;
+            let iconName = type === "success" ? "check-circle" : (type === "info" ? "info" : "alert-triangle");
+            let iconColor = type === "success" ? "#10b981" : (type === "info" ? "#06b6d4" : "#f43f5e");
+            toast.innerHTML = `<i data-lucide="${iconName}" style="width: 18px; color: ${iconColor};"></i><span>${message}</span>`;
             container.appendChild(toast);
             
-            lucide.createIcons({nodeList: [toast]});
+            lucide.createIcons({ nodeList: [toast] });
 
             setTimeout(() => {
                 toast.style.animation = "slideIn 0.3s reverse forwards";
@@ -603,83 +1076,140 @@
             }, 4000);
         }
 
-        // Format bytes
         function formatBytes(bytes) {
-            if (bytes === 0) return '0 Bytes';
+            if (!bytes || bytes === 0) return '0 B';
             const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
-        // Check node status
+        // Live status loop
         async function checkNodeStatus() {
             const badge = document.getElementById("status-badge");
             const statusText = document.getElementById("status-text");
 
             try {
-                const response = await fetch(`${nodeUrl}/status`);
-                if (!response.ok) throw new Error();
-                const status = await response.json();
+                // Fetch basic node status
+                const res = await fetch(`${nodeUrl}/api/v1/status`).catch(() => fetch(`${nodeUrl}/status`));
+                if (!res.ok) throw new Error("Status endpoint error");
+                const status = await res.json();
 
                 isNodeOnline = true;
-                badge.className = "status-badge online";
-                statusText.innerText = "ONLINE";
+                const isPaused = status.lifecycle_state === "Paused";
+                badge.className = isPaused ? "status-badge paused" : "status-badge online";
+                statusText.innerText = isPaused ? "PAUSED" : "ONLINE";
 
-                document.getElementById("peer-id").innerText = status.peer_id;
-                document.getElementById("listen-addr").innerText = status.listen_addresses[0] || 'No listen addresses';
-                document.getElementById("storage-value").innerText = `${formatBytes(status.storage_used)} / ${formatBytes(status.storage_quota)}`;
+                const peerIdShort = status.peer_id.length > 14 
+                    ? `${status.peer_id.substring(0, 7)}...${status.peer_id.substring(status.peer_id.length - 5)}`
+                    : status.peer_id;
+                document.getElementById("peer-id-short").innerText = peerIdShort;
+                document.getElementById("peer-id-full").innerText = status.peer_id;
+                document.getElementById("listen-addr").innerText = (status.listen_addresses && status.listen_addresses[0]) ? status.listen_addresses[0] : 'No listen addresses';
                 
-                const percent = (status.storage_used / status.storage_quota) * 100;
-                document.getElementById("storage-progress-fill").style.width = `${percent}%`;
+                document.getElementById("storage-used-display").innerText = formatBytes(status.storage_used);
+                document.getElementById("storage-quota-display").innerText = formatBytes(status.storage_quota);
+                
+                const percent = status.storage_quota > 0 ? (status.storage_used / status.storage_quota) * 100 : 0;
+                document.getElementById("storage-progress-fill").style.width = `${Math.min(100, percent)}%`;
 
                 // Update peers list
                 const peersContainer = document.getElementById("peers-list");
-                if (status.peers.length === 0) {
+                const peersCount = document.getElementById("peers-count");
+                peersCount.innerText = `${status.peers ? status.peers.length : 0} active`;
+
+                if (!status.peers || status.peers.length === 0) {
                     peersContainer.innerHTML = `<div class="list-item" style="justify-content: center; color: #6b7280;">No active peers.</div>`;
                 } else {
-                    peersContainer.innerHTML = status.peers.map(p => `
-                        <div class="list-item">
-                            <span style="font-family: monospace;">${p}</span>
-                            <span class="status-badge online" style="padding: 2px 8px; font-size: 10px;"><span class="dot"></span>active</span>
-                        </div>
-                    `).join("");
+                    peersContainer.innerHTML = status.peers.map(p => {
+                        const pShort = p.length > 20 ? `${p.substring(0, 10)}...${p.substring(p.length - 8)}` : p;
+                        return `
+                            <div class="list-item">
+                                <span class="mono-val">${pShort}</span>
+                                <span class="status-badge online" style="padding: 2px 8px; font-size: 10px;"><span class="dot"></span>verified</span>
+                            </div>
+                        `;
+                    }).join("");
                 }
 
                 // Update shards list
                 const shardsContainer = document.getElementById("shards-list");
-                if (status.shards.length === 0) {
+                const shardsCount = document.getElementById("shards-count");
+                shardsCount.innerText = `${status.shards ? status.shards.length : 0} shards`;
+
+                if (!status.shards || status.shards.length === 0) {
                     shardsContainer.innerHTML = `<div class="list-item" style="justify-content: center; color: #6b7280;">No local shards.</div>`;
                 } else {
                     shardsContainer.innerHTML = status.shards.map(s => `
                         <div class="list-item">
-                            <span style="font-family: monospace; font-size: 12px;">${s.substring(0, 32)}...</span>
+                            <span class="mono-val" style="font-size: 11px;">${s.substring(0, 28)}...</span>
+                            <span style="font-size: 11px; color: #10b981;">stored</span>
                         </div>
                     `).join("");
                 }
 
-                // Enable forms
-                document.getElementById("pair-btn").disabled = false;
-                document.getElementById("upload-btn").disabled = false;
-                document.getElementById("download-btn").disabled = false;
+                // Fetch Credits & Reciprocity
+                try {
+                    const credRes = await fetch(`${nodeUrl}/api/v1/credits/me`);
+                    if (credRes.ok) {
+                        const credits = await credRes.json();
+                        updateCreditsUI(credits);
+                    }
+                } catch (_) {}
 
-            } catch (error) {
+                // Enable buttons
+                setButtonsDisabled(false);
+
+            } catch (err) {
                 isNodeOnline = false;
                 badge.className = "status-badge";
                 statusText.innerText = "OFFLINE";
-                document.getElementById("peer-id").innerText = "-";
-                document.getElementById("listen-addr").innerText = "-";
-                document.getElementById("storage-value").innerText = "0 GB / 0 GB";
+                document.getElementById("peer-id-short").innerText = "—";
+                document.getElementById("peer-id-full").innerText = "—";
+                document.getElementById("listen-addr").innerText = "—";
+                document.getElementById("storage-used-display").innerText = "0 B";
                 document.getElementById("storage-progress-fill").style.width = "0%";
-                
                 document.getElementById("peers-list").innerHTML = `<div class="list-item" style="justify-content: center; color: #6b7280;">Node offline.</div>`;
                 document.getElementById("shards-list").innerHTML = `<div class="list-item" style="justify-content: center; color: #6b7280;">Node offline.</div>`;
-
-                // Disable forms
-                document.getElementById("pair-btn").disabled = true;
-                document.getElementById("upload-btn").disabled = true;
-                document.getElementById("download-btn").disabled = true;
+                setButtonsDisabled(true);
             }
+        }
+
+        function setButtonsDisabled(disabled) {
+            const pairBtn = document.getElementById("pair-btn");
+            const upBtn = document.getElementById("upload-btn");
+            const downBtn = document.getElementById("download-btn");
+            if (pairBtn) pairBtn.disabled = disabled;
+            if (upBtn) upBtn.disabled = disabled;
+            if (downBtn) downBtn.disabled = disabled;
+        }
+
+        function updateCreditsUI(credits) {
+            const tierBadge = document.getElementById("reciprocity-tier-badge");
+            const tierText = document.getElementById("reciprocity-tier-text");
+            const tier = credits.tier || "Tier1Unrestricted";
+
+            let tierClass = "tier-1";
+            let tierLabel = "TIER 1 UNRESTRICTED";
+            if (tier === "Tier2Prioritized") { tierClass = "tier-2"; tierLabel = "TIER 2 PRIORITIZED"; }
+            else if (tier === "Tier3Restricted") { tierClass = "tier-3"; tierLabel = "TIER 3 RESTRICTED"; }
+            else if (tier === "Tier4Suspended") { tierClass = "tier-4"; tierLabel = "TIER 4 SUSPENDED"; }
+
+            tierBadge.className = `tier-badge ${tierClass}`;
+            tierText.innerText = tierLabel;
+
+            document.getElementById("fair-share-ratio").innerText = `${(credits.fair_share_ratio || 1.0).toFixed(2)}x`;
+            document.getElementById("bytes-contributed").innerText = formatBytes(credits.bytes_contributed || 0);
+            document.getElementById("bytes-consumed").innerText = formatBytes(credits.bytes_consumed || 0);
+            document.getElementById("earned-allowance").innerText = formatBytes(credits.earned_allowance_bytes || 0);
+            
+            const bal = credits.credit_balance || 0;
+            const balEl = document.getElementById("credit-balance");
+            balEl.innerText = (bal >= 0 ? `+${bal}` : `${bal}`) + " B";
+            balEl.style.color = bal >= 0 ? "#10b981" : "#f43f5e";
+
+            document.getElementById("audits-passed").innerText = credits.audits_passed || 0;
+            document.getElementById("audits-failed").innerText = credits.audits_failed || 0;
         }
 
         // Pair peer action
@@ -687,31 +1217,32 @@
             event.preventDefault();
             const input = document.getElementById("peer-multiaddr");
             const btn = document.getElementById("pair-btn");
-            const originalHtml = btn.innerHTML;
+            if (!input.value.trim()) return;
 
             btn.disabled = true;
-            btn.innerHTML = `<svg class="spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray="1, 200" stroke-dashoffset="0"/></svg><span>Pairing...</span>`;
-
             try {
-                const response = await fetch(`${nodeUrl}/pair`, {
+                const res = await fetch(`${nodeUrl}/api/v1/pair`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ multiaddr: input.value.trim() })
-                });
+                }).catch(() => fetch(`${nodeUrl}/pair`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ multiaddr: input.value.trim() })
+                }));
 
-                if (response.ok) {
+                if (res.ok) {
                     showToast("Successfully paired with peer!", "success");
                     input.value = "";
                     checkNodeStatus();
                 } else {
-                    const text = await response.text();
+                    const text = await res.text();
                     showToast("Pairing failed: " + text, "error");
                 }
-            } catch (e) {
+            } catch (_) {
                 showToast("Network error during pairing", "error");
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = originalHtml;
             }
         }
 
@@ -742,25 +1273,26 @@
             btn.innerHTML = `<svg class="spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray="1, 200" stroke-dashoffset="0"/></svg><span>Encrypting & Distributing...</span>`;
 
             try {
-                const response = await fetch(`${nodeUrl}/upload`, {
+                const res = await fetch(`${nodeUrl}/api/v1/upload`, {
                     method: 'POST',
                     body: formData
-                });
+                }).catch(() => fetch(`${nodeUrl}/upload`, {
+                    method: 'POST',
+                    body: formData
+                }));
 
-                if (response.ok) {
-                    const manifest = await response.json();
-                    showToast("File uploaded and distributed successfully!", "success");
-                    console.log("Upload Manifest:", manifest);
+                if (res.ok) {
+                    showToast(`File "${fileId}" uploaded and distributed!`, "success");
                     document.getElementById("upload-form").reset();
                     document.getElementById("upload-salt").value = "testsalt";
                     document.getElementById("upload-k").value = "1";
                     document.getElementById("upload-m").value = "1";
                     checkNodeStatus();
                 } else {
-                    const err = await response.text();
+                    const err = await res.text();
                     showToast("Upload failed: " + err, "error");
                 }
-            } catch (e) {
+            } catch (_) {
                 showToast("Network error during upload", "error");
             } finally {
                 btn.disabled = false;
@@ -785,24 +1317,26 @@
 
             try {
                 const queryParams = new URLSearchParams({ passphrase, salt, k, m }).toString();
-                const response = await fetch(`${nodeUrl}/download/${fileId}?${queryParams}`);
+                const res = await fetch(`${nodeUrl}/api/v1/download/${fileId}?${queryParams}`).catch(() => 
+                    fetch(`${nodeUrl}/download/${fileId}?${queryParams}`)
+                );
 
-                if (response.ok) {
-                    const blob = await response.blob();
+                if (res.ok) {
+                    const blob = await res.blob();
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = url;
-                    a.download = fileId; // Let browser resolve extension or save as name
+                    a.download = fileId;
                     document.body.appendChild(a);
                     a.click();
                     a.remove();
                     window.URL.revokeObjectURL(url);
-                    showToast("File successfully reconstructed and downloaded!", "success");
+                    showToast(`File "${fileId}" downloaded successfully!`, "success");
                 } else {
-                    const err = await response.text();
+                    const err = await res.text();
                     showToast("Download failed: " + err, "error");
                 }
-            } catch (e) {
+            } catch (_) {
                 showToast("Network error during download", "error");
             } finally {
                 btn.disabled = false;
@@ -810,7 +1344,163 @@
             }
         }
 
-        // Start status checker
+        // Repair check
+        async function checkFileRepair() {
+            const fileId = document.getElementById("repair-file-id").value.trim();
+            if (!fileId) return;
+
+            try {
+                const res = await fetch(`${nodeUrl}/api/v1/repair/check/${fileId}`);
+                const resultsBox = document.getElementById("repair-results");
+                resultsBox.style.display = "block";
+
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById("repair-file-title").innerText = `File: ${data.file_id}`;
+                    const badge = document.getElementById("repair-health-badge");
+                    const summary = document.getElementById("repair-summary");
+
+                    if (!data.degraded_chunks || data.degraded_chunks.length === 0) {
+                        badge.className = "status-badge online";
+                        badge.innerText = "HEALTHY (100%)";
+                        summary.innerText = "All erasure shards intact and verified across mesh peers.";
+                    } else if (data.can_repair_all) {
+                        badge.className = "status-badge paused";
+                        badge.innerText = "DEGRADED (REPAIRABLE)";
+                        summary.innerText = `${data.degraded_chunks.length} degraded chunk(s) detected. Reed-Solomon threshold intact; automatic reconstruction ready.`;
+                    } else {
+                        badge.className = "status-badge";
+                        badge.innerText = "CRITICAL DEGRADATION";
+                        summary.innerText = `${data.degraded_chunks.length} degraded chunk(s). Missing shards exceed parity threshold.`;
+                    }
+                } else {
+                    showToast(`Repair check failed for "${fileId}"`, "error");
+                }
+            } catch (_) {
+                showToast("Network error checking repair status", "error");
+            }
+        }
+
+        // Lifecycle controls
+        async function pauseNode() {
+            try {
+                const res = await fetch(`${nodeUrl}/api/v1/pause`, { method: 'POST' });
+                if (res.ok) {
+                    showToast("Node traffic paused", "info");
+                    checkNodeStatus();
+                }
+            } catch (_) { showToast("Failed to pause node", "error"); }
+        }
+
+        async function resumeNode() {
+            try {
+                const res = await fetch(`${nodeUrl}/api/v1/resume`, { method: 'POST' });
+                if (res.ok) {
+                    showToast("Node traffic resumed", "success");
+                    checkNodeStatus();
+                }
+            } catch (_) { showToast("Failed to resume node", "error"); }
+        }
+
+        async function leaveMesh() {
+            if (!confirm("Are you sure you want to gracefully leave the mesh network?")) return;
+            try {
+                const res = await fetch(`${nodeUrl}/api/v1/leave`, { method: 'POST' });
+                if (res.ok) {
+                    showToast("Node has departed the network", "info");
+                    checkNodeStatus();
+                }
+            } catch (_) { showToast("Failed to execute leave command", "error"); }
+        }
+
+        // Quota & Bandwidth
+        async function updateQuota() {
+            const gb = parseFloat(document.getElementById("quota-gb-input").value);
+            if (isNaN(gb) || gb <= 0) return;
+            try {
+                const res = await fetch(`${nodeUrl}/api/v1/quota`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ quota_gb: gb })
+                });
+                if (res.ok) {
+                    showToast(`Quota updated to ${gb} GB`, "success");
+                    checkNodeStatus();
+                }
+            } catch (_) { showToast("Failed to update quota", "error"); }
+        }
+
+        async function updateBandwidth() {
+            const kbps = parseInt(document.getElementById("bandwidth-limit-input").value, 10);
+            if (isNaN(kbps)) return;
+            try {
+                const res = await fetch(`${nodeUrl}/api/v1/bandwidth`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ limit_kbps: kbps === 0 ? null : kbps })
+                });
+                if (res.ok) {
+                    showToast(kbps === 0 ? "Bandwidth limit removed" : `Bandwidth limited to ${kbps} KB/s`, "success");
+                }
+            } catch (_) { showToast("Failed to update bandwidth", "error"); }
+        }
+
+        // Modals
+        function openCreateInviteModal() {
+            document.getElementById("create-invite-modal").classList.add("active");
+        }
+        function openJoinInviteModal() {
+            document.getElementById("join-invite-modal").classList.add("active");
+        }
+        function closeModals() {
+            document.getElementById("create-invite-modal").classList.remove("active");
+            document.getElementById("join-invite-modal").classList.remove("active");
+        }
+
+        async function submitCreateInvite() {
+            const org = document.getElementById("invite-org-id").value.trim() || null;
+            const dur = parseInt(document.getElementById("invite-duration").value, 10) || 3600;
+
+            try {
+                const res = await fetch(`${nodeUrl}/api/v1/invite/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ organization_id: org, duration_secs: dur })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById("invite-created-box").style.display = "block";
+                    document.getElementById("invite-payload-output").value = data.qr_payload;
+                    showToast("Invitation created successfully!", "success");
+                } else {
+                    showToast("Failed to create invitation", "error");
+                }
+            } catch (_) { showToast("Network error generating invitation", "error"); }
+        }
+
+        async function submitJoinInvite() {
+            const payload = document.getElementById("join-qr-input").value.trim();
+            if (!payload) return;
+
+            try {
+                const res = await fetch(`${nodeUrl}/api/v1/invite/join`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ qr_payload: payload })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    showToast("Joined network from issuer: " + data.issuer_peer_id, "success");
+                    closeModals();
+                    checkNodeStatus();
+                } else {
+                    const text = await res.text();
+                    showToast("Failed to join: " + text, "error");
+                }
+            } catch (_) { showToast("Network error joining invitation", "error"); }
+        }
+
+        // Periodic polling
         checkNodeStatus();
         setInterval(checkNodeStatus, 3000);
     </script>

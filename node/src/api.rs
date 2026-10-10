@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     extract::{Multipart, Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -162,8 +162,15 @@ pub fn make_router(state: AppState) -> Router {
         .route("/pair", post(pair_peer))
         .route("/upload", post(upload_file))
         .route("/download/:file_id", get(download_file))
+        // Web Dashboard UI
+        .route("/", get(serve_dashboard))
+        .route("/dashboard", get(serve_dashboard))
         .with_state(state)
         .layer(cors)
+}
+
+async fn serve_dashboard() -> impl IntoResponse {
+    Html(include_str!("../../dashboard.html"))
 }
 
 async fn get_status(State(state): State<AppState>) -> Json<NodeStatus> {
@@ -605,4 +612,22 @@ async fn get_peer_credits(
         fair_share_ratio: ledger.fair_share_ratio(),
         is_throttled,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_serve_dashboard_contains_title() {
+        let resp = serve_dashboard().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let html = String::from_utf8(body.to_vec()).expect("utf8 string");
+        assert!(html.contains("MESH STORAGE MONITOR"));
+        assert!(html.contains("Reciprocity Tier"));
+        assert!(html.contains("Self-Healing Redundancy Inspector"));
+    }
 }

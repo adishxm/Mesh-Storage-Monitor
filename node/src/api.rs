@@ -90,6 +90,20 @@ pub struct JoinInviteResponse {
     pub message: String,
 }
 
+#[derive(Serialize)]
+pub struct ReliabilityResponse {
+    pub peer_id: String,
+    pub score: f64,
+    pub is_healthy: bool,
+}
+
+#[derive(Serialize)]
+pub struct RepairCheckResponse {
+    pub file_id: String,
+    pub degraded_chunks: Vec<mesh_core::DegradedChunk>,
+    pub can_repair_all: bool,
+}
+
 pub fn make_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -112,6 +126,8 @@ pub fn make_router(state: AppState) -> Router {
         .route("/api/v1/pair", post(pair_peer))
         .route("/api/v1/upload", post(upload_file))
         .route("/api/v1/download/:file_id", get(download_file))
+        .route("/api/v1/reliability/:peer_id", get(get_peer_reliability))
+        .route("/api/v1/repair/check/:file_id", get(check_file_repair))
         // Backward-compatibility aliases for local prototypes & dashboards
         .route("/status", get(get_status))
         .route("/peers", get(get_peers))
@@ -479,4 +495,40 @@ async fn download_file(
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
 
     Ok(file_data)
+}
+
+async fn get_peer_reliability(
+    State(state): State<AppState>,
+    Path(peer_id): Path<String>,
+) -> Json<ReliabilityResponse> {
+    let node_state = state.node_state.read().await;
+    let score = node_state.get_peer_reliability(&peer_id);
+    let is_healthy = node_state.is_peer_healthy(&peer_id);
+    Json(ReliabilityResponse {
+        peer_id,
+        score,
+        is_healthy,
+    })
+}
+
+async fn check_file_repair(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Result<Json<RepairCheckResponse>, (StatusCode, String)> {
+    let node_state = state.node_state.read().await;
+    let manifest = node_state.read_manifest(&file_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Manifest {} not found", file_id),
+        )
+    })?;
+
+    let degraded = node_state.check_manifest_health(&manifest);
+    let can_repair_all = degraded.iter().all(|c| c.can_repair());
+
+    Ok(Json(RepairCheckResponse {
+        file_id,
+        degraded_chunks: degraded,
+        can_repair_all,
+    }))
 }

@@ -2,6 +2,7 @@ use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::crypto::{decrypt_data, derive_shard_iv, encrypt_data};
 use crate::merkle::{Hash256, hash_data};
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -201,6 +202,73 @@ pub fn plan_chunk_repair(
             shard_idx: missing_idx,
             shard_hash,
             shard_data,
+            target_peer_id,
+        });
+    }
+
+    Ok(plans)
+}
+
+/// Generates the concrete repair plan for an encrypted degraded chunk using the file key.
+/// Decrypts surviving shards, performs Reed-Solomon reconstruction on plaintext, re-encrypts
+/// missing shards using deterministic IVs, and assigns them to candidate placement peers.
+pub fn plan_encrypted_chunk_repair(
+    degraded: &DegradedChunk,
+    surviving_encrypted_shards: &[Option<Vec<u8>>],
+    file_key: &[u8; 32],
+    available_peers: &[String],
+    existing_holders: &[String],
+) -> Result<Vec<ReconstructedShardPlan>, RepairError> {
+    if !degraded.can_repair() {
+        return Err(RepairError::InsufficientShards {
+            available: degraded.surviving_indices.len(),
+            required: degraded.k,
+        });
+    }
+
+    // 1. Decrypt surviving shards to plaintext
+    let mut decrypted_shards: Vec<Option<Vec<u8>>> = Vec::with_capacity(degraded.total_shards);
+    for opt_enc in surviving_encrypted_shards.iter() {
+        match opt_enc {
+            Some(enc_bytes) => {
+                let plain = decrypt_data(enc_bytes, file_key)
+                    .map_err(|e| RepairError::ReedSolomon(format!("Decryption failure: {}", e)))?;
+                decrypted_shards.push(Some(plain));
+            }
+            None => {
+                decrypted_shards.push(None);
+            }
+        }
+    }
+
+    // 2. Perform Reed-Solomon reconstruction on plaintext shards
+    let all_plain_shards = reconstruct_all_shards(&decrypted_shards, degraded.k, degraded.m)?;
+
+    // 3. Select placement candidate peers
+    let candidates = select_placement_candidates(
+        available_peers,
+        existing_holders,
+        degraded.missing_indices.len(),
+    );
+
+    if candidates.len() < degraded.missing_indices.len() {
+        return Err(RepairError::NoPlacementCandidates);
+    }
+
+    // 4. Re-encrypt missing shards using deterministic IVs
+    let mut plans = Vec::with_capacity(degraded.missing_indices.len());
+    for (i, &missing_idx) in degraded.missing_indices.iter().enumerate() {
+        let plain_shard = &all_plain_shards[missing_idx];
+        let iv = derive_shard_iv(file_key, degraded.chunk_idx, missing_idx);
+        let re_encrypted_shard = encrypt_data(plain_shard, file_key, &iv)
+            .map_err(|e| RepairError::ReedSolomon(format!("Re-encryption failure: {}", e)))?;
+        let shard_hash = hash_data(&re_encrypted_shard);
+        let target_peer_id = candidates[i].clone();
+
+        plans.push(ReconstructedShardPlan {
+            shard_idx: missing_idx,
+            shard_hash,
+            shard_data: re_encrypted_shard,
             target_peer_id,
         });
     }

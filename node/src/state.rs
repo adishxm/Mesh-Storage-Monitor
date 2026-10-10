@@ -2,7 +2,7 @@ use libp2p::{Multiaddr, PeerId};
 use mesh_core::FileManifest;
 use mesh_core::quota::{QuotaPolicy, QuotaTracker};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use tracing::{error, info};
@@ -47,6 +47,7 @@ pub struct NodeState {
     pub nat_status: String,
     pub relay_addresses: HashSet<Multiaddr>,
     pub bandwidth_limiter: Option<mesh_core::BandwidthLimiter>,
+    pub peer_reliability: HashMap<String, mesh_core::PeerReliabilityTracker>,
 }
 
 #[allow(dead_code)]
@@ -79,6 +80,7 @@ impl NodeState {
             nat_status: "Unknown".to_string(),
             relay_addresses: HashSet::new(),
             bandwidth_limiter: None,
+            peer_reliability: HashMap::new(),
         };
 
         state.load_trusted_peers();
@@ -412,6 +414,75 @@ impl NodeState {
             relay_addresses: self.relay_addresses.iter().map(|a| a.to_string()).collect(),
             bandwidth_limit_kbps,
         }
+    }
+
+    pub fn record_audit_success(&mut self, peer_id: &str, timestamp: u64) {
+        let tracker = self
+            .peer_reliability
+            .entry(peer_id.to_string())
+            .or_insert_with(|| mesh_core::PeerReliabilityTracker::new(peer_id.to_string()));
+        tracker.record_success(timestamp);
+    }
+
+    pub fn record_audit_failure(&mut self, peer_id: &str, timestamp: u64) {
+        let tracker = self
+            .peer_reliability
+            .entry(peer_id.to_string())
+            .or_insert_with(|| mesh_core::PeerReliabilityTracker::new(peer_id.to_string()));
+        tracker.record_failure(timestamp);
+    }
+
+    pub fn get_peer_reliability(&self, peer_id: &str) -> f64 {
+        self.peer_reliability
+            .get(peer_id)
+            .map(|t| t.reliability_score())
+            .unwrap_or(1.0)
+    }
+
+    pub fn is_peer_healthy(&self, peer_id: &str) -> bool {
+        self.peer_reliability
+            .get(peer_id)
+            .map(|t| t.is_healthy(0.5))
+            .unwrap_or(true)
+    }
+
+    pub fn check_manifest_health(&self, manifest: &FileManifest) -> Vec<mesh_core::DegradedChunk> {
+        let mut degraded_chunks = Vec::new();
+
+        for (chunk_idx, chunk) in manifest.chunks.iter().enumerate() {
+            let mut surviving_indices = Vec::new();
+
+            for (shard_idx, holder) in chunk.shard_holders.iter().enumerate() {
+                let is_available = if holder == &self.peer_id.to_string() {
+                    let hash_hex = hex::encode(chunk.shard_hashes[shard_idx]);
+                    self.has_shard(&hash_hex)
+                } else if let Ok(peer_id) = holder.parse::<PeerId>() {
+                    self.is_trusted(&peer_id)
+                        && self.connected_peers.contains(&peer_id)
+                        && self.is_peer_healthy(holder)
+                } else {
+                    false
+                };
+
+                if is_available {
+                    surviving_indices.push(shard_idx);
+                }
+            }
+
+            let degraded = mesh_core::DegradedChunk::new(
+                manifest.file_id.clone(),
+                chunk_idx,
+                manifest.k,
+                manifest.m,
+                surviving_indices,
+            );
+
+            if degraded.is_degraded() {
+                degraded_chunks.push(degraded);
+            }
+        }
+
+        degraded_chunks
     }
 }
 

@@ -25,7 +25,7 @@ pub use quota::{
 };
 pub use repair::{
     DegradedChunk, ReconstructedShardPlan, RepairError, RepairState, plan_chunk_repair,
-    reconstruct_all_shards, select_placement_candidates,
+    plan_encrypted_chunk_repair, reconstruct_all_shards, select_placement_candidates,
 };
 use serde::{Deserialize, Serialize};
 

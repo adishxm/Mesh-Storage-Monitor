@@ -79,9 +79,9 @@ The system consists of the following components:
 | **Core Language** | Rust (v1.96.0+) |
 | **Networking** | `libp2p` (TCP, Noise transport, Yamux multiplexer) |
 | **Discovery** | mDNS (local LAN auto-discovery), Kademlia DHT (peer routing) |
-| **Access Control** | PeerID-based `trusted_peers.json` allowlist. Untrusted peers disconnected immediately. |
-| **Brute Force Defense** | 5 failed attempts in 60s -> 30-minute in-memory ban & OS Firewall block (`netsh advfirewall`) |
-| **Chunking** | FastCDC (1MB Min, 2MB Avg, 4MB Max chunk size) |
+| **Access Control** | PeerID-based cryptographic authentication & allowlist; untrusted peers rejected |
+| **Defense & Throttling** | Application-layer peer rate limits, reputation scoring & connection clamping (optional OS firewall hook) |
+| **Chunking** | FastCDC (512KB Min, 2MB Avg, 8MB Max canonical chunk size) |
 | **Erasure Coding** | Reed-Solomon Erasure (`k` data, `m` parity shards, where $k+m \le$ network peer count) |
 | **Data Encryption** | AES-256-GCM + Argon2id (key derivation) + deterministic HKDF-SHA256 per-shard IVs |
 | **Integrity Checks** | Root-hash verification using SHA-256 Merkle DAG |

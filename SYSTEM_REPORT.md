@@ -23,7 +23,7 @@ The core data pipeline follows a strict mathematical transform:
 ### A. Content-Defined Chunking (FastCDC)
 Traditional chunking splits files at fixed byte offsets, which suffers from the "insertion/deletion shift" problem (inserting 1 byte shifts all downstream offsets, changing every chunk hash).
 * **Our Solution**: We implemented **FastCDC** using a rolling Gear hash. A sliding window hashes the content and triggers a split boundary when the hash matches a specific pattern. This ensures boundaries are locked to content patterns.
-* **Size Constraints**: Target average chunk size is 2MB, with a hard minimum of 1MB (to prevent tiny fragment overhead) and a hard maximum of 4MB (to cap memory usage).
+* **Size Constraints**: Target average chunk size is 2MB, with a canonical minimum of 512KB and a maximum of 8MB (defined as protocol constants in `core/src/chunking.rs`).
 
 ### B. Cryptographic System
 1. **Master Key Derivation**: Uses **Argon2id** (the industry-standard memory-hard hashing algorithm) to derive a master key from a user passphrase and salt.

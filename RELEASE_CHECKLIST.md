@@ -1,7 +1,8 @@
 # Mesh Storage Monitor — Release Verification & Production Gate Checklist
 
 **Target:** Milestone D / Production Gate Verification  
-**Architecture:** Privacy-Preserving Global Peer-to-Peer Storage Cloud  
+**Status:** Architecture and implementation scaffold substantially complete. Production verification pending.  
+**Active Workstream:** Phase 00A — Reproducible verification and security reset  
 **Engine:** Rust / libp2p (Canonical Production Node)  
 **Date:** 2026-10-10  
 
@@ -11,23 +12,25 @@
 
 | Metric / Objective | Target SLO | Observed & Verified | Gate Status |
 | :--- | :--- | :--- | :--- |
-| **Compiler & Linter Warnings** | 0 warnings under `-D warnings` | 0 warnings across all crates (`cargo clippy`) | **PASS** |
-| **Workspace Test Suite** | 100% pass rate | 96 tests passed across 6 workspace crates | **PASS** |
+| **Compiler & Linter Warnings** | 0 warnings under `-D warnings` | 0 warnings across all crates (`cargo clippy`) | **PASS (Scaffold)** |
+| **Workspace Test Suite** | 100% pass rate | 113 tests passed across 6 workspace crates | **PASS (Unit/Sim)** |
+| **Legacy Node CI Compatibility** | Clean runner test execution | `npm ci` + `npm test` verified passing | **PASS** |
 | **Erasure Coding Determinism** | Bit-for-bit identity | Galois field $GF(2^8)$ deterministic reconstruction | **PASS** |
-| **FastCDC Content Chunking** | Bounded streaming memory | Verified with $O(1)$ memory usage on large streams | **PASS** |
-| **Cryptographic Confidentiality** | Zero-knowledge client-side | Argon2id + AES-256-GCM + Poly1305 authentication | **PASS** |
-| **Secrets Zero-Leakage** | Zero plaintext leaks in logs | Verified in `test_zero_leakage_and_secrets_redaction` | **PASS** |
-| **Single-Node Persistence** | Crash recovery & restart | Peer ID, state, and routing survive node reboot | **PASS** |
-| **Multi-Node LAN Clustering** | 3-node cluster recovery | Survives temporary node dropout; files reconstruct | **PASS** |
-| **Android Background Policy** | Zero battery drain runaway | Enforces Wi-Fi unmetered, charging, & storage floor | **PASS** |
-| **Internet NAT Traversal** | libp2p Relay v2 / AutoNAT | Automatic dialback confirmation and relay fallback | **PASS** |
-| **Multi-Tenant SaaS Boundary** | Strict organization isolation | Zero cross-tenant data leakage or spoofing | **PASS** |
-| **Proof-of-Storage Auditing** | Merkle chunk challenge | Unproven or tampered shards fail audits; penalize peers | **PASS** |
-| **Automated Shard Self-Repair** | Zero-knowledge reconstruction | Decrypts plain shards, recalculates RS, re-encrypts | **PASS** |
-| **Reciprocity Credit Accounting** | Non-cryptocurrency fair-share | Freeriders clamped to `Throttled`/`Suspended` tiers | **PASS** |
-| **Sybil Swarm Defense** | Subnet density rate limit | Blocks $>3$ devices registered per `/24` or `/48` subnet | **PASS** |
-| **Disaster Recovery Backup** | Authenticated `.mbak` restore | Snapshot encryption + full recovery of manifests/state | **PASS** |
+| **FastCDC Content Chunking** | 512KB min, 2MB avg, 8MB max | Validated in core chunking unit & stream tests | **PASS** |
+| **Cryptographic Confidentiality** | Zero-knowledge client-side | Argon2id + AES-256-GCM + Poly1305 authentication | **HARDENING (In Progress)** |
+| **Secrets Zero-Leakage** | Zero plaintext leaks in logs | Verified in `test_zero_leakage_and_secrets_redaction` | **PASS (Simulated)** |
+| **Single-Node Persistence** | Crash recovery & restart | Peer ID, state, and routing survive node reboot | **PASS (Simulated)** |
+| **Multi-Node LAN Clustering** | 3-node cluster recovery | In-process test passes; real 3-device demo pending | **PENDING (Real Devices)** |
+| **Android Background Policy** | Scoped storage & battery policy | JNI bridge scaffolded; Gradle NDK packaging pending | **PENDING (NDK Build)** |
+| **Internet NAT Traversal** | libp2p Relay v2 / AutoNAT | Swarm integration test passes; WAN proof pending | **PENDING (Public WAN)** |
+| **Multi-Tenant SaaS Boundary** | Strict organization isolation | In-memory models pass; PostgreSQL store pending | **PENDING (PostgreSQL)** |
+| **Proof-of-Storage Auditing** | Merkle chunk challenge | Unproven or tampered shards fail audits; worker pending | **PASS (Algorithm)** |
+| **Automated Shard Self-Repair** | Zero-knowledge reconstruction | Decrypts plain shards, recalculates RS, re-encrypts | **PASS (Algorithm)** |
+| **Reciprocity Credit Accounting** | Non-cryptocurrency fair-share | Freeriders clamped; adversarial validation pending | **PASS (Model)** |
+| **Sybil Swarm Defense** | Subnet density rate limit | Blocks $>3$ devices registered per `/24` or `/48` subnet | **PASS (Unit)** |
+| **Disaster Recovery Backup** | Authenticated `.mbak` restore | Snapshot encryption + recovery of manifests/state | **PASS (Format/Drill)** |
 | **Observability Telemetry** | Prometheus exposition | `/metrics` exported by node and control-plane | **PASS** |
+| **Production Gate Clearance** | Full production signoff | Security reset, CORS hardening, streaming in progress | **NOT YET PASSED** |
 
 ---
 

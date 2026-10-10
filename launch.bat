@@ -61,10 +61,13 @@ start "" "http://localhost:3000/"
 :: Set environment variables for LAN mode and mandatory authentication
 set "MESH_API_KEY=mesh_secret_lan_key_987"
 set "MESH_ENV=lan"
-set "CARGO_TARGET_DIR=%USERPROFILE%\.gemini\antigravity-ide\scratch\cargo-target"
 
 echo [INFO] Starting mesh-node daemon (Press Ctrl+C to stop)...
-cargo run -p mesh-node -- --bind 0.0.0.0 --port 4001 --api-port 3000 --quota 5.0
+if exist "target\debug\mesh-node.exe" (
+    target\debug\mesh-node.exe --bind 0.0.0.0 --port 4001 --api-port 3000 --quota 5.0
+) else (
+    cargo run -p mesh-node -- --bind 0.0.0.0 --port 4001 --api-port 3000 --quota 5.0
+)
 goto end
 
 :start_node2
@@ -84,10 +87,13 @@ start "" "http://localhost:3001/"
 
 set "MESH_API_KEY=mesh_secret_lan_key_987"
 set "MESH_ENV=lan"
-set "CARGO_TARGET_DIR=%USERPROFILE%\.gemini\antigravity-ide\scratch\cargo-target"
 
 echo [INFO] Starting secondary mesh-node daemon (Press Ctrl+C to stop)...
-cargo run -p mesh-node -- --bind 0.0.0.0 --port 4002 --api-port 3001 --quota 5.0
+if exist "target\debug\mesh-node.exe" (
+    target\debug\mesh-node.exe --bind 0.0.0.0 --port 4002 --api-port 3001 --quota 5.0
+) else (
+    cargo run -p mesh-node -- --bind 0.0.0.0 --port 4002 --api-port 3001 --quota 5.0
+)
 goto end
 
 :open_browser
@@ -101,7 +107,6 @@ echo.
 echo ======================================================================
 echo  RUNNING FULL WORKSPACE AUTOMATED VERIFICATION SUITE
 echo ======================================================================
-set "CARGO_TARGET_DIR=%USERPROFILE%\.gemini\antigravity-ide\scratch\cargo-target"
 cargo test --workspace
 echo.
 pause

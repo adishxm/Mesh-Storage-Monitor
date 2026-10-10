@@ -43,5 +43,8 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install legacy Node dependencies
+        run: npm ci --prefix node_version
+
       - name: Run Legacy Reference Tests
-        run: node node_version/test_core.js
+        run: npm test --prefix node_version

@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         :root {
             --bg-color: #07070d;
@@ -649,6 +650,12 @@
         </div>
 
         <div class="header-actions">
+            <!-- Mobile Scan & Join QR -->
+            <button class="lifecycle-btn" onclick="openQrModal()" style="background: rgba(168, 85, 247, 0.2); border-color: rgba(168, 85, 247, 0.5); color: #d8b4fe;" title="Scan QR Code to open dashboard on mobile phone or join cluster">
+                <i data-lucide="qr-code" style="width: 15px;"></i>
+                <span>Scan & Join</span>
+            </button>
+
             <!-- Node lifecycle control -->
             <div class="lifecycle-bar">
                 <button class="lifecycle-btn" onclick="pauseNode()" title="Pause storage traffic">
@@ -999,7 +1006,59 @@
                         <i data-lucide="user-check" style="width: 15px;"></i>
                         <span>Join via Token</span>
                     </button>
+                    <button class="secondary-btn" style="justify-content: center; grid-column: span 2; background: rgba(168, 85, 247, 0.15); border-color: rgba(168, 85, 247, 0.4); color: #d8b4fe;" onclick="openQrModal()">
+                        <i data-lucide="smartphone" style="width: 15px;"></i>
+                        <span>Show Live Network Join QR Code</span>
+                    </button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Scan & Join QR Modal -->
+    <div class="modal-overlay" id="qr-modal">
+        <div class="modal-card" style="max-width: 440px; text-align: center;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <i data-lucide="smartphone" style="color: #a855f7; width: 20px;"></i>
+                    <h3 style="font-family: 'Outfit'; font-size: 19px; color: #fff;">Scan to Join Network</h3>
+                </div>
+                <button class="close-btn" onclick="closeModals()">&times;</button>
+            </div>
+
+            <div style="display: flex; gap: 6px; margin-bottom: 16px; background: rgba(255,255,255,0.04); padding: 4px; border-radius: 10px;">
+                <button id="qr-tab-web" class="secondary-btn" style="flex: 1; justify-content: center; background: rgba(168,85,247,0.25); border-color: rgba(168,85,247,0.6); font-size: 11px;" onclick="switchQrTab('web')">
+                    <i data-lucide="globe" style="width: 13px;"></i> Web URL
+                </button>
+                <button id="qr-tab-p2p" class="secondary-btn" style="flex: 1; justify-content: center; font-size: 11px;" onclick="switchQrTab('p2p')">
+                    <i data-lucide="network" style="width: 13px;"></i> Multiaddr
+                </button>
+                <button id="qr-tab-invite" class="secondary-btn" style="flex: 1; justify-content: center; font-size: 11px;" onclick="switchQrTab('invite')">
+                    <i data-lucide="ticket" style="width: 13px;"></i> Invite
+                </button>
+            </div>
+
+            <!-- QR Code Display Box -->
+            <div style="background: #ffffff; padding: 16px; border-radius: 16px; display: inline-block; margin: 0 auto 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);">
+                <div id="qr-code-canvas-container" style="width: 220px; height: 220px; display: flex; align-items: center; justify-content: center;"></div>
+            </div>
+
+            <div id="qr-meta-box">
+                <div id="qr-label-title" style="font-size: 13px; font-weight: 700; color: #e2e8f0; margin-bottom: 4px;">Web Dashboard Live URL</div>
+                <div id="qr-value-display" class="mono-val" style="font-size: 12px; color: #d8b4fe; word-break: break-all; margin-bottom: 12px; max-height: 50px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 6px 10px; border-radius: 6px;">http://localhost:3000/</div>
+                <div style="display: flex; gap: 8px; justify-content: center;">
+                    <button class="secondary-btn" onclick="copyQrContent()">
+                        <i data-lucide="copy" style="width: 14px;"></i> Copy
+                    </button>
+                    <a id="qr-open-link" href="#" target="_blank" class="secondary-btn" style="text-decoration: none; color: #e2e8f0;">
+                        <i data-lucide="external-link" style="width: 14px;"></i> Open
+                    </a>
+                </div>
+            </div>
+
+            <div style="margin-top: 16px; padding: 10px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 10px; font-size: 11px; color: #a7f3d0; text-align: left; display: flex; gap: 8px; align-items: flex-start;">
+                <i data-lucide="wifi" style="width: 16px; flex-shrink: 0; margin-top: 2px;"></i>
+                <span id="qr-help-text">Point your smartphone camera at the QR code to open the visual dashboard live on this Wi-Fi network.</span>
             </div>
         </div>
     </div>
@@ -1020,9 +1079,12 @@
                 <input type="number" id="invite-duration" value="3600">
             </div>
             <button class="submit-btn" onclick="submitCreateInvite()">Generate QR Payload</button>
-            <div id="invite-created-box" style="margin-top: 16px; display: none;">
-                <label>QR Payload String</label>
-                <textarea id="invite-payload-output" readonly style="width: 100%; height: 90px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 10px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px;"></textarea>
+            <div id="invite-created-box" style="margin-top: 16px; display: none; text-align: center;">
+                <label style="display: block; text-align: left;">Scan or Share Invite QR</label>
+                <div style="background: #ffffff; padding: 12px; border-radius: 12px; display: inline-block; margin: 10px auto; box-shadow: 0 4px 16px rgba(0,0,0,0.5);">
+                    <div id="invite-qr-container" style="width: 180px; height: 180px; display: flex; align-items: center; justify-content: center;"></div>
+                </div>
+                <textarea id="invite-payload-output" readonly style="width: 100%; height: 70px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 10px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px;"></textarea>
             </div>
         </div>
     </div>
@@ -1048,6 +1110,11 @@
     <script>
         let nodeUrl = "http://localhost:3000";
         let isNodeOnline = false;
+        let currentLanIp = null;
+        let currentMultiaddr = "";
+        let currentWebUrl = "";
+        let currentQrTab = "web";
+        let currentQrText = "";
 
         // Initialize icons
         lucide.createIcons();
@@ -1106,6 +1173,30 @@
                 document.getElementById("peer-id-short").innerText = peerIdShort;
                 document.getElementById("peer-id-full").innerText = status.peer_id;
                 document.getElementById("listen-addr").innerText = (status.listen_addresses && status.listen_addresses[0]) ? status.listen_addresses[0] : 'No listen addresses';
+                
+                // Extract local LAN IP from listen multiaddresses
+                if (status.listen_addresses && status.listen_addresses.length > 0) {
+                    for (const addr of status.listen_addresses) {
+                        const match = addr.match(/\/ip4\/([0-9.]+)\/tcp/);
+                        if (match && match[1] && match[1] !== "127.0.0.1" && match[1] !== "0.0.0.0") {
+                            currentLanIp = match[1];
+                            break;
+                        }
+                    }
+                }
+                if (!currentLanIp) {
+                    const host = window.location.hostname;
+                    currentLanIp = (host && host !== "localhost" && host !== "127.0.0.1") ? host : "127.0.0.1";
+                }
+
+                const port = window.location.port || (nodeUrl.includes(":3001") ? "3001" : "3000");
+                currentWebUrl = `http://${currentLanIp}:${port}/`;
+
+                if (status.listen_addresses && status.peer_id) {
+                    const nonLoopback = status.listen_addresses.find(a => !a.includes("127.0.0.1") && !a.includes("0.0.0.0"));
+                    const baseAddr = nonLoopback || status.listen_addresses[0] || `/ip4/${currentLanIp}/tcp/4001`;
+                    currentMultiaddr = `${baseAddr}/p2p/${status.peer_id}`;
+                }
                 
                 document.getElementById("storage-used-display").innerText = formatBytes(status.storage_used);
                 document.getElementById("storage-quota-display").innerText = formatBytes(status.storage_quota);
@@ -1462,7 +1553,119 @@
             } catch (_) { showToast("Failed to update bandwidth", "error"); }
         }
 
-        // Modals
+        // QR Code and Modals
+        function renderQrCode(containerId, text, width = 200, height = 200) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = "";
+
+            if (typeof QRCode !== 'undefined') {
+                try {
+                    new QRCode(container, {
+                        text: text,
+                        width: width,
+                        height: height,
+                        colorDark: "#000000",
+                        colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.M
+                    });
+                    return;
+                } catch (e) {
+                    console.warn("QRCode rendering error:", e);
+                }
+            }
+
+            // Image fallback via public QR generator service with offline fallback
+            const img = document.createElement("img");
+            img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${width}x${height}&data=${encodeURIComponent(text)}`;
+            img.alt = "QR Code";
+            img.style.width = width + "px";
+            img.style.height = height + "px";
+            img.style.borderRadius = "8px";
+            img.onerror = () => {
+                // Completely offline fallback: render clean visual badge and link box
+                container.innerHTML = `
+                    <div style="width: ${width}px; height: ${height}px; background: #07070d; border: 2px dashed rgba(168,85,247,0.4); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; color: #e2e8f0; font-size: 11px; text-align: center;">
+                        <i data-lucide="qr-code" style="width: 28px; height: 28px; color: #a855f7; margin-bottom: 8px;"></i>
+                        <div style="font-weight: 700; color: #d8b4fe; margin-bottom: 4px;">Direct Link</div>
+                        <div class="mono-val" style="word-break: break-all; color: #38bdf8; font-size: 10px;">${text}</div>
+                    </div>
+                `;
+                lucide.createIcons({ nodeList: [container] });
+            };
+            container.appendChild(img);
+        }
+
+        function openQrModal() {
+            document.getElementById("qr-modal").classList.add("active");
+            switchQrTab(currentQrTab || "web");
+            lucide.createIcons();
+        }
+
+        function switchQrTab(tab) {
+            currentQrTab = tab;
+            const btnWeb = document.getElementById("qr-tab-web");
+            const btnP2p = document.getElementById("qr-tab-p2p");
+            const btnInvite = document.getElementById("qr-tab-invite");
+            const titleEl = document.getElementById("qr-label-title");
+            const valEl = document.getElementById("qr-value-display");
+            const openLink = document.getElementById("qr-open-link");
+            const helpText = document.getElementById("qr-help-text");
+
+            if (btnWeb) btnWeb.style.background = tab === 'web' ? 'rgba(168,85,247,0.3)' : 'rgba(255,255,255,0.06)';
+            if (btnWeb) btnWeb.style.borderColor = tab === 'web' ? 'rgba(168,85,247,0.6)' : 'var(--card-border)';
+            if (btnP2p) btnP2p.style.background = tab === 'p2p' ? 'rgba(168,85,247,0.3)' : 'rgba(255,255,255,0.06)';
+            if (btnP2p) btnP2p.style.borderColor = tab === 'p2p' ? 'rgba(168,85,247,0.6)' : 'var(--card-border)';
+            if (btnInvite) btnInvite.style.background = tab === 'invite' ? 'rgba(168,85,247,0.3)' : 'rgba(255,255,255,0.06)';
+            if (btnInvite) btnInvite.style.borderColor = tab === 'invite' ? 'rgba(168,85,247,0.6)' : 'var(--card-border)';
+
+            if (tab === 'web') {
+                currentQrText = currentWebUrl || window.location.href;
+                if (titleEl) titleEl.innerText = "Web Dashboard Live URL";
+                if (valEl) valEl.innerText = currentQrText;
+                if (openLink) {
+                    openLink.style.display = "inline-flex";
+                    openLink.href = currentQrText;
+                }
+                if (helpText) helpText.innerText = "Point your smartphone camera at this QR code to open the visual dashboard live on your mobile device (connected to the same Wi-Fi).";
+                renderQrCode("qr-code-canvas-container", currentQrText, 220, 220);
+            } else if (tab === 'p2p') {
+                currentQrText = currentMultiaddr || (document.getElementById("listen-addr") ? document.getElementById("listen-addr").innerText : "P2P Multiaddr not available");
+                if (titleEl) titleEl.innerText = "Node P2P Multiaddress";
+                if (valEl) valEl.innerText = currentQrText;
+                if (openLink) openLink.style.display = "none";
+                if (helpText) helpText.innerText = "Scan or copy this multiaddress into another node's pairing card to establish a Noise-authenticated P2P connection.";
+                renderQrCode("qr-code-canvas-container", currentQrText, 220, 220);
+            } else if (tab === 'invite') {
+                if (titleEl) titleEl.innerText = "Cluster Single-Use Invitation";
+                if (openLink) openLink.style.display = "none";
+                if (helpText) helpText.innerText = "Generating cryptographic single-use invite token for instant cluster enrollment...";
+                if (valEl) valEl.innerText = "Generating invite token...";
+                
+                fetch(`${nodeUrl}/api/v1/invite/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration_secs: 3600 })
+                }).then(r => r.json()).then(data => {
+                    currentQrText = data.qr_payload;
+                    if (valEl) valEl.innerText = currentQrText;
+                    renderQrCode("qr-code-canvas-container", currentQrText, 220, 220);
+                    if (helpText) helpText.innerText = "Scan this cryptographic invite token from another device or node to join with verified mutual trust.";
+                }).catch(() => {
+                    if (valEl) valEl.innerText = "Failed to generate invite token";
+                });
+            }
+        }
+
+        function copyQrContent() {
+            if (!currentQrText) return;
+            navigator.clipboard.writeText(currentQrText).then(() => {
+                showToast("Copied to clipboard!", "success");
+            }).catch(() => {
+                showToast("Could not copy to clipboard", "error");
+            });
+        }
+
         function openCreateInviteModal() {
             document.getElementById("create-invite-modal").classList.add("active");
         }
@@ -1472,6 +1675,8 @@
         function closeModals() {
             document.getElementById("create-invite-modal").classList.remove("active");
             document.getElementById("join-invite-modal").classList.remove("active");
+            const qrModal = document.getElementById("qr-modal");
+            if (qrModal) qrModal.classList.remove("active");
         }
 
         async function submitCreateInvite() {
@@ -1488,6 +1693,7 @@
                     const data = await res.json();
                     document.getElementById("invite-created-box").style.display = "block";
                     document.getElementById("invite-payload-output").value = data.qr_payload;
+                    renderQrCode("invite-qr-container", data.qr_payload, 180, 180);
                     showToast("Invitation created successfully!", "success");
                 } else {
                     showToast("Failed to create invitation", "error");

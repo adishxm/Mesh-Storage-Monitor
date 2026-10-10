@@ -30,7 +30,24 @@ pub struct DownloadPayload {
 
 fn check_api_auth(headers: &axum::http::HeaderMap) -> Result<(), (StatusCode, String)> {
     let expected_key = std::env::var("MESH_API_KEY").unwrap_or_default();
-    if !expected_key.is_empty() {
+    let require_auth = std::env::var("MESH_REQUIRE_AUTH")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let env_mode = std::env::var("MESH_ENV").unwrap_or_else(|_| "development".to_string());
+
+    let auth_mandatory = require_auth
+        || env_mode.eq_ignore_ascii_case("production")
+        || env_mode.eq_ignore_ascii_case("lan")
+        || !expected_key.is_empty();
+
+    if auth_mandatory {
+        if expected_key.is_empty() {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                "Unauthorized: MESH_API_KEY must be configured in non-development modes".to_string(),
+            ));
+        }
+
         let provided = headers
             .get("x-mesh-api-key")
             .and_then(|v| v.to_str().ok())
@@ -40,6 +57,7 @@ fn check_api_auth(headers: &axum::http::HeaderMap) -> Result<(), (StatusCode, St
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.strip_prefix("Bearer "))
             });
+
         if provided != Some(expected_key.as_str()) {
             return Err((
                 StatusCode::UNAUTHORIZED,
@@ -1079,6 +1097,22 @@ mod tests {
 
         unsafe {
             std::env::remove_var("MESH_API_KEY");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_api_auth_mandatory_outside_dev() {
+        unsafe {
+            std::env::remove_var("MESH_API_KEY");
+            std::env::set_var("MESH_REQUIRE_AUTH", "1");
+        }
+
+        let headers = axum::http::HeaderMap::new();
+        let res = check_api_auth(&headers);
+        assert_eq!(res.err().unwrap().0, StatusCode::UNAUTHORIZED);
+
+        unsafe {
+            std::env::remove_var("MESH_REQUIRE_AUTH");
         }
     }
 }

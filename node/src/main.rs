@@ -14,6 +14,7 @@ use mesh_node::state::NodeState;
 struct Args {
     p2p_port: u16,
     api_port: u16,
+    api_bind: String,
     quota: f64,
     dial_peer: Option<String>,
 }
@@ -22,6 +23,7 @@ fn parse_args() -> Args {
     let mut args = Args {
         p2p_port: 4001,
         api_port: 3000,
+        api_bind: env::var("MESH_API_BIND").unwrap_or_else(|_| "127.0.0.1".to_string()),
         quota: 1.5,
         dial_peer: None,
     };
@@ -40,6 +42,11 @@ fn parse_args() -> Args {
                     && let Ok(p) = val.parse()
                 {
                     args.api_port = p;
+                }
+            }
+            "-b" | "--bind" => {
+                if let Some(val) = iter.next() {
+                    args.api_bind = val;
                 }
             }
             "-q" | "--quota" => {
@@ -101,7 +108,25 @@ async fn main() -> anyhow::Result<()> {
     };
     let app = make_router(app_state);
 
-    let api_addr = format!("0.0.0.0:{}", args.api_port);
+    // Security guard: If binding outside loopback, enforce authentication
+    let is_loopback = args.api_bind == "127.0.0.1" || args.api_bind == "localhost" || args.api_bind == "::1";
+    if !is_loopback {
+        let existing_key = env::var("MESH_API_KEY").unwrap_or_default();
+        if existing_key.is_empty() {
+            let generated_key = format!("mesh_sec_{}", hex::encode(rand::random::<[u8; 16]>()));
+            tracing::warn!("═══════════════════════════════════════════════════════════════════");
+            tracing::warn!("SECURITY ALERT: API bound to non-loopback interface ({}).", args.api_bind);
+            tracing::warn!("Generated ephemeral API key: {}", generated_key);
+            tracing::warn!("Set MESH_API_KEY environment variable or pass X-Mesh-Api-Key header.");
+            tracing::warn!("═══════════════════════════════════════════════════════════════════");
+            unsafe {
+                env::set_var("MESH_API_KEY", &generated_key);
+                env::set_var("MESH_REQUIRE_AUTH", "1");
+            }
+        }
+    }
+
+    let api_addr = format!("{}:{}", args.api_bind, args.api_port);
     info!("Starting HTTP API server on {}", api_addr);
     let listener = tokio::net::TcpListener::bind(&api_addr).await?;
 

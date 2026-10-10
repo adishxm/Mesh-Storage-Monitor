@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod chunking;
 pub mod crypto;
 pub mod erasure;
@@ -12,6 +13,10 @@ use crate::crypto::{
 };
 use crate::erasure::{encode_data, reconstruct_data};
 use crate::merkle::{Hash256, compute_chunk_hash, compute_root_hash, hash_data, verify_shard};
+pub use audit::{
+    AuditChallenge, AuditProof, AuditVerificationResult, PeerReliabilityTracker,
+    compute_audit_proof, verify_audit_proof,
+};
 pub use invitation::{Invitation, InvitationError};
 pub use quota::{
     AndroidDeviceState, AndroidNetworkPolicy, AndroidPolicyDecision, AndroidPowerPolicy,

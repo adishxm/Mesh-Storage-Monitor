@@ -47,6 +47,24 @@ android {
     buildFeatures {
         compose = true
     }
+
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/jniLibs")
+        }
+    }
+}
+
+// Optional Cargo NDK build task linking Rust crate to Android APK packaging
+tasks.register<Exec>("cargoNdkBuild") {
+    description = "Compile Rust JNI native library for Android ABIs"
+    workingDir = file("../../android-bridge")
+    val isWindows = System.getProperty("os.name").lowercase().contains("windows")
+    if (isWindows) {
+        commandLine("cmd", "/c", "cargo", "ndk", "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64", "-o", "../android/app/src/main/jniLibs", "build", "--release")
+    } else {
+        commandLine("cargo", "ndk", "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64", "-o", "../android/app/src/main/jniLibs", "build", "--release")
+    }
 }
 
 dependencies {

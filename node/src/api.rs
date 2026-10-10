@@ -602,30 +602,32 @@ async fn upload_file(
                 )
             }
             "file" => {
-                let temp_file = tempfile::NamedTempFile::new().map_err(|e| {
+                use std::io::Write;
+                let mut temp_file = tempfile::NamedTempFile::new().map_err(|e| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("Failed to create temporary upload file: {}", e),
                     )
                 })?;
-                let mut std_file = temp_file
-                    .reopen()
-                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
                 while let Some(chunk) = field
                     .chunk()
                     .await
                     .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
                 {
-                    use std::io::Write;
-                    std_file
+                    temp_file
                         .write_all(&chunk)
                         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
                 }
-                use std::io::Write;
-                std_file
+                temp_file
                     .flush()
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-                temp_path_opt = Some(temp_file.into_temp_path().to_path_buf());
+                let (_file, path) = temp_file.keep().map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to persist temp upload file: {}", e),
+                    )
+                })?;
+                temp_path_opt = Some(path);
             }
             _ => {}
         }

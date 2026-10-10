@@ -495,49 +495,7 @@ impl NetworkService {
                     return Ok(());
                 }
 
-                if !state.is_trusted(&peer_id) {
-                    warn!(
-                        "Disconnecting untrusted connection from PeerID: {}",
-                        peer_id
-                    );
-                    // Disconnect immediately
-                    self.swarm.disconnect_peer_id(peer_id).unwrap_or_default();
-
-                    if let Some(ip) = remote_ip_opt {
-                        info!("Untrusted connection attempt from IP: {}", ip);
-                        let now = std::time::Instant::now();
-                        let mut trigger_ban = false;
-
-                        if let Some(attempt) = self.unlisted_attempts.get_mut(&ip) {
-                            if now.duration_since(attempt.1) < std::time::Duration::from_secs(60) {
-                                attempt.0 += 1;
-                                info!(
-                                    "Untrusted connection attempts from IP {}: {}/5",
-                                    ip, attempt.0
-                                );
-                                if attempt.0 >= 5 {
-                                    trigger_ban = true;
-                                }
-                            } else {
-                                // Reset tracker window
-                                *attempt = (1, now);
-                            }
-                        } else {
-                            self.unlisted_attempts.insert(ip.clone(), (1, now));
-                        }
-
-                        if trigger_ban {
-                            warn!(
-                                "IP {} exceeded 5 untrusted connection attempts in 60s. Banning for 30 minutes.",
-                                ip
-                            );
-                            self.blocked_ips
-                                .insert(ip.clone(), now + std::time::Duration::from_secs(30 * 60));
-                            self.unlisted_attempts.remove(&ip);
-                            block_ip_firewall(&ip);
-                        }
-                    }
-                } else {
+                if state.is_trusted(&peer_id) {
                     info!("Connection established with trusted PeerID: {}", peer_id);
                     state.connected_peers.insert(peer_id);
                     // Add to Kademlia routing
@@ -545,6 +503,11 @@ impl NetworkService {
                         .behaviour_mut()
                         .kademlia
                         .add_address(&peer_id, endpoint.get_remote_address().clone());
+                } else {
+                    info!(
+                        "Connection established with unauthenticated PeerID: {} (awaiting handshake / pair request)",
+                        peer_id
+                    );
                 }
             }
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
@@ -649,6 +612,7 @@ impl NetworkService {
                             peer_id, caller_multiaddr
                         );
                         state.add_trusted_peer(peer_id);
+                        state.connected_peers.insert(peer_id);
                         if let Ok(addr) = caller_multiaddr.parse::<Multiaddr>() {
                             self.swarm
                                 .behaviour_mut()
@@ -663,11 +627,31 @@ impl NetworkService {
                         return Ok(());
                     }
                     warn!("Rejecting request from untrusted peer {}", peer_id);
+                    let now = std::time::Instant::now();
+                    let peer_str = peer_id.to_string();
+                    let attempt = self
+                        .unlisted_attempts
+                        .entry(peer_str.clone())
+                        .or_insert((0, now));
+                    if now.duration_since(attempt.1) < std::time::Duration::from_secs(60) {
+                        attempt.0 += 1;
+                        if attempt.0 >= 5 {
+                            warn!(
+                                "Peer {} exceeded 5 untrusted requests in 60s. Enforcing ban.",
+                                peer_str
+                            );
+                            block_ip_firewall(&peer_str);
+                        }
+                    } else {
+                        *attempt = (1, now);
+                    }
+
                     self.swarm
                         .behaviour_mut()
                         .request_response
                         .send_response(channel, ShardResponse::Error("Untrusted peer".to_string()))
                         .unwrap_or_default();
+                    self.swarm.disconnect_peer_id(peer_id).unwrap_or_default();
                     return Ok(());
                 }
 
@@ -911,6 +895,17 @@ async fn perform_pair_async(
         .await
         .map_err(|e| anyhow!("Failed to send AddPeerAddress command: {}", e))?;
 
+    // Wait until connection is established (up to 3 seconds)
+    for _ in 0..30 {
+        {
+            let s = state.read().await;
+            if s.connected_peers.contains(&peer_id) {
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+
     // Send a Pair Request
     let local_addr = {
         let s = state.read().await;
@@ -936,6 +931,8 @@ async fn perform_pair_async(
     match rx.await? {
         Ok(ShardResponse::PairAck { success: true }) => {
             info!("Pairing with peer {} succeeded", peer_id);
+            let mut s = state.write().await;
+            s.connected_peers.insert(peer_id);
             Ok(())
         }
         other => Err(anyhow!("Pairing failed: {:?}", other)),

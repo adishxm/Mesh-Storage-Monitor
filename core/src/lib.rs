@@ -6,6 +6,7 @@ pub mod format;
 pub mod invitation;
 pub mod merkle;
 pub mod quota;
+pub mod repair;
 
 use crate::chunking::chunk_data;
 use crate::crypto::{
@@ -21,6 +22,10 @@ pub use invitation::{Invitation, InvitationError};
 pub use quota::{
     AndroidDeviceState, AndroidNetworkPolicy, AndroidPolicyDecision, AndroidPowerPolicy,
     BandwidthLimiter, QuotaError, QuotaPolicy, QuotaTracker, evaluate_android_policy,
+};
+pub use repair::{
+    DegradedChunk, ReconstructedShardPlan, RepairError, RepairState, plan_chunk_repair,
+    reconstruct_all_shards, select_placement_candidates,
 };
 use serde::{Deserialize, Serialize};
 

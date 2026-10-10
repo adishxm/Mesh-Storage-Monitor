@@ -24,6 +24,36 @@ struct Cli {
     command: Commands,
 }
 
+fn resolve_passphrase(opt: Option<String>, env_var: &str, prompt_label: &str) -> Result<String> {
+    if let Some(p) = opt.filter(|p| !p.is_empty()) {
+        return Ok(p);
+    }
+    let env_val = std::env::var(env_var).unwrap_or_default();
+    if !env_val.is_empty() {
+        return Ok(env_val);
+    }
+    use std::io::{IsTerminal, Write};
+    if std::io::stdin().is_terminal() {
+        print!("{}: ", prompt_label);
+        std::io::stdout()
+            .flush()
+            .context("Failed to flush stdout")?;
+        let mut input = String::new();
+        std::io::stdin()
+            .read_line(&mut input)
+            .context("Failed to read passphrase from stdin")?;
+        let trimmed = input.trim_end_matches(&['\r', '\n'][..]).to_string();
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
+    anyhow::bail!(
+        "Passphrase required for {}! Provide via CLI argument (--passphrase), set the {} environment variable, or enter interactively.",
+        prompt_label,
+        env_var
+    )
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     #[command(about = "Display node telemetry, peers, quota, NAT, and reciprocity tier")]
@@ -42,6 +72,26 @@ enum Commands {
     Upload {
         #[arg(help = "Path to file to upload")]
         file_path: PathBuf,
+
+        #[arg(
+            short,
+            long,
+            help = "Passphrase to encrypt the file (prompts securely if omitted)"
+        )]
+        passphrase: Option<String>,
+
+        #[arg(
+            short,
+            long,
+            help = "Hex salt (16 bytes hex, generated automatically if omitted)"
+        )]
+        salt: Option<String>,
+
+        #[arg(short, long, default_value_t = 2, help = "Data shards (k)")]
+        k: usize,
+
+        #[arg(short, long, default_value_t = 1, help = "Parity shards (m)")]
+        m: usize,
     },
 
     #[command(about = "Retrieve, reconstruct, and decrypt a file from the mesh")]
@@ -356,24 +406,53 @@ async fn main() -> Result<()> {
             }
         },
 
-        Commands::Upload { file_path } => {
+        Commands::Upload {
+            file_path,
+            passphrase,
+            salt,
+            k,
+            m,
+        } => {
+            let pass = resolve_passphrase(
+                passphrase,
+                "MESH_PASSPHRASE",
+                "Enter File Encryption Passphrase",
+            )?;
+            let salt_str = salt.unwrap_or_else(|| {
+                use rand::RngCore;
+                let mut s = [0u8; 16];
+                rand::thread_rng().fill_bytes(&mut s);
+                hex::encode(s)
+            });
+
             let filename = file_path
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let data = fs::read(&file_path)
-                .with_context(|| format!("Failed to read file: {:?}", file_path))?;
-            let len = data.len();
 
-            let part = multipart::Part::bytes(data).file_name(filename.clone());
-            let form = multipart::Form::new().part("file", part);
+            let file = tokio::fs::File::open(&file_path)
+                .await
+                .with_context(|| format!("Failed to open file: {:?}", file_path))?;
+            let metadata = file.metadata().await?;
+            let len = metadata.len();
+
+            let body = reqwest::Body::from(file);
+            let part = multipart::Part::stream_with_length(body, len).file_name(filename.clone());
+
+            let form = multipart::Form::new()
+                .text("file_id", filename.clone())
+                .text("passphrase", pass)
+                .text("salt", salt_str.clone())
+                .text("k", k.to_string())
+                .text("m", m.to_string())
+                .part("file", part);
 
             let url = format!("{}/api/v1/upload", base_url);
             println!(
-                "Uploading {} ({}) to mesh storage...",
+                "Uploading {} ({}) to mesh storage (streaming)...",
                 filename,
-                format_bytes(len as u64)
+                format_bytes(len)
             );
 
             let resp: Value = client
@@ -384,21 +463,20 @@ async fn main() -> Result<()> {
                 .json()
                 .await?;
 
-            if resp["status"] == "ok" {
+            if resp["status"] == "ok" || resp.get("file_id").is_some() {
                 println!("\x1b[1;32mUpload Succeeded!\x1b[0m");
                 println!(
                     "File ID    : \x1b[1m{}\x1b[0m",
-                    resp["file_id"].as_str().unwrap_or("")
+                    resp["file_id"].as_str().unwrap_or(&filename)
                 );
                 println!("Root Hash  : {}", resp["root_hash"].as_str().unwrap_or(""));
-                println!("Chunks     : {}", resp["chunks"].as_u64().unwrap_or(0));
                 println!(
-                    "Passphrase : \x1b[1;33m{}\x1b[0m",
-                    resp["passphrase"].as_str().unwrap_or("")
+                    "Chunks     : {}",
+                    resp["chunks"].as_array().map(|c| c.len()).unwrap_or(0)
                 );
-                println!("Salt (hex) : {}", resp["salt"].as_str().unwrap_or(""));
+                println!("Salt (hex) : {}", salt_str);
                 println!(
-                    "\x1b[1;31mIMPORTANT:\x1b[0m Save your Passphrase & Salt! The mesh is zero-knowledge; without them, files cannot be recovered."
+                    "\x1b[1;32mSecurity Notice:\x1b[0m File encrypted with your private passphrase. Never disclose your credentials."
                 );
             } else {
                 println!("\x1b[1;31mUpload Failed: {:?}\x1b[0m", resp);
@@ -413,19 +491,22 @@ async fn main() -> Result<()> {
             m,
             out,
         } => {
-            let url = format!("{}/api/v1/download/{}", base_url, file_id);
-            let query = [
-                (
-                    "passphrase",
-                    passphrase.unwrap_or_else(|| "cluster-secret-passphrase-2026".to_string()),
-                ),
-                ("salt", salt.unwrap_or_else(|| hex::encode([0u8; 16]))),
-                ("k", k.to_string()),
-                ("m", m.to_string()),
-            ];
+            let pass =
+                resolve_passphrase(passphrase, "MESH_PASSPHRASE", "Enter Decryption Passphrase")?;
+            let salt_val = salt.ok_or_else(|| {
+                anyhow::anyhow!("Salt (hex) is required for decryption! Pass via --salt.")
+            })?;
 
-            println!("Retrieving shards for {}...", file_id);
-            let resp = client.get(&url).query(&query).send().await?;
+            let url = format!("{}/api/v1/download/{}", base_url, file_id);
+            let payload = serde_json::json!({
+                "passphrase": pass,
+                "salt": salt_val,
+                "k": k,
+                "m": m,
+            });
+
+            println!("Retrieving and reconstructing shards for {}...", file_id);
+            let resp = client.post(&url).json(&payload).send().await?;
 
             if !resp.status().is_success() {
                 let err_text = resp.text().await.unwrap_or_default();
@@ -616,7 +697,8 @@ async fn main() -> Result<()> {
 
         Commands::Backup { action } => match action {
             BackupAction::Export { passphrase, out } => {
-                let pass = passphrase.unwrap_or_else(|| "default_mesh_backup_key".to_string());
+                let pass =
+                    resolve_passphrase(passphrase, "MESH_BACKUP_KEY", "Enter Backup Passphrase")?;
                 let url = format!("{}/api/v1/backup/export", base_url);
                 let resp: Value = client
                     .post(&url)
@@ -644,7 +726,8 @@ async fn main() -> Result<()> {
                 file_path,
                 passphrase,
             } => {
-                let pass = passphrase.unwrap_or_else(|| "default_mesh_backup_key".to_string());
+                let pass =
+                    resolve_passphrase(passphrase, "MESH_BACKUP_KEY", "Enter Backup Passphrase")?;
                 let bytes = fs::read(&file_path).with_context(|| {
                     format!("Failed to read backup file at {}", file_path.display())
                 })?;
@@ -830,5 +913,32 @@ mod tests {
             Commands::Metrics => {}
             _ => panic!("Expected Metrics command"),
         }
+    }
+
+    #[test]
+    fn test_resolve_passphrase_explicit() {
+        let res = resolve_passphrase(Some("explicit_pw".to_string()), "TEST_VAR_NOT_SET", "Test");
+        assert_eq!(res.unwrap(), "explicit_pw");
+    }
+
+    #[test]
+    fn test_resolve_passphrase_env() {
+        unsafe {
+            std::env::set_var("TEST_MESH_KEY_RESOLVE", "env_secret_key");
+        }
+        let res = resolve_passphrase(None, "TEST_MESH_KEY_RESOLVE", "Test");
+        assert_eq!(res.unwrap(), "env_secret_key");
+        unsafe {
+            std::env::remove_var("TEST_MESH_KEY_RESOLVE");
+        }
+    }
+
+    #[test]
+    fn test_resolve_passphrase_missing_fails() {
+        // Without terminal and without env var, resolve_passphrase must fail (no default secrets!)
+        let res = resolve_passphrase(None, "NON_EXISTENT_VAR_xyz", "Test");
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err().to_string();
+        assert!(err_msg.contains("Passphrase required for Test"));
     }
 }

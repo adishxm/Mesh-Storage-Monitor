@@ -1316,9 +1316,26 @@
             btn.innerHTML = `<svg class="spinner" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-dasharray="1, 200" stroke-dashoffset="0"/></svg><span>Reconstructing...</span>`;
 
             try {
-                const queryParams = new URLSearchParams({ passphrase, salt, k, m }).toString();
-                const res = await fetch(`${nodeUrl}/api/v1/download/${fileId}?${queryParams}`).catch(() => 
-                    fetch(`${nodeUrl}/download/${fileId}?${queryParams}`)
+                const res = await fetch(`${nodeUrl}/api/v1/download/${fileId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        passphrase,
+                        salt,
+                        k: parseInt(k, 10) || 2,
+                        m: parseInt(m, 10) || 1
+                    })
+                }).catch(() => 
+                    fetch(`${nodeUrl}/download/${fileId}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            passphrase,
+                            salt,
+                            k: parseInt(k, 10) || 2,
+                            m: parseInt(m, 10) || 1
+                        })
+                    })
                 );
 
                 if (res.ok) {

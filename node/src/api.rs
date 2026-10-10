@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, oneshot};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 use crate::network::Command;
 use crate::state::{NodeLifecycleState, NodeState, NodeStatus};
@@ -20,12 +20,34 @@ pub struct AppState {
     pub network_tx: mpsc::Sender<Command>,
 }
 
-#[derive(Deserialize)]
-pub struct DownloadQuery {
-    pub passphrase: String,
-    pub salt: String,
-    pub k: usize,
-    pub m: usize,
+#[derive(Deserialize, Default)]
+pub struct DownloadPayload {
+    pub passphrase: Option<String>,
+    pub salt: Option<String>,
+    pub k: Option<usize>,
+    pub m: Option<usize>,
+}
+
+fn check_api_auth(headers: &axum::http::HeaderMap) -> Result<(), (StatusCode, String)> {
+    let expected_key = std::env::var("MESH_API_KEY").unwrap_or_default();
+    if !expected_key.is_empty() {
+        let provided = headers
+            .get("x-mesh-api-key")
+            .and_then(|v| v.to_str().ok())
+            .or_else(|| {
+                headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.strip_prefix("Bearer "))
+            });
+        if provided != Some(expected_key.as_str()) {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                "Unauthorized: Invalid or missing X-Mesh-Api-Key".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -156,10 +178,51 @@ pub struct BackupRestoreResponse {
 }
 
 pub fn make_router(state: AppState) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let allowed_origins = [
+        "http://localhost:3000"
+            .parse::<axum::http::HeaderValue>()
+            .unwrap(),
+        "http://127.0.0.1:3000"
+            .parse::<axum::http::HeaderValue>()
+            .unwrap(),
+        "http://[::1]:3000"
+            .parse::<axum::http::HeaderValue>()
+            .unwrap(),
+    ];
+    let mut cors = CorsLayer::new()
+        .allow_origin(allowed_origins)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderName::from_static("x-mesh-api-key"),
+            axum::http::HeaderName::from_static("x-mesh-passphrase"),
+            axum::http::HeaderName::from_static("x-mesh-salt"),
+        ]);
+
+    if let Some(val) = std::env::var("MESH_ALLOWED_ORIGIN")
+        .ok()
+        .and_then(|orig| orig.parse::<axum::http::HeaderValue>().ok())
+    {
+        cors = CorsLayer::new()
+            .allow_origin([val])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderName::from_static("x-mesh-api-key"),
+                axum::http::HeaderName::from_static("x-mesh-passphrase"),
+                axum::http::HeaderName::from_static("x-mesh-salt"),
+            ]);
+    }
 
     Router::new()
         // API v1 Canonical Endpoints
@@ -176,7 +239,10 @@ pub fn make_router(state: AppState) -> Router {
         .route("/api/v1/leave", post(leave_node))
         .route("/api/v1/pair", post(pair_peer))
         .route("/api/v1/upload", post(upload_file))
-        .route("/api/v1/download/:file_id", get(download_file))
+        .route(
+            "/api/v1/download/:file_id",
+            post(download_file_post).get(download_file_get),
+        )
         .route("/api/v1/reliability/:peer_id", get(get_peer_reliability))
         .route("/api/v1/repair/check/:file_id", get(check_file_repair))
         .route("/api/v1/credits/me", get(get_my_credits))
@@ -192,7 +258,10 @@ pub fn make_router(state: AppState) -> Router {
         .route("/shards", get(get_shards))
         .route("/pair", post(pair_peer))
         .route("/upload", post(upload_file))
-        .route("/download/:file_id", get(download_file))
+        .route(
+            "/download/:file_id",
+            post(download_file_post).get(download_file_get),
+        )
         // Web Dashboard UI
         .route("/", get(serve_dashboard))
         .route("/dashboard", get(serve_dashboard))
@@ -236,8 +305,10 @@ async fn get_quota(State(state): State<AppState>) -> Json<QuotaResponse> {
 
 async fn set_quota(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<QuotaUpdateRequest>,
 ) -> Result<Json<QuotaResponse>, (StatusCode, String)> {
+    check_api_auth(&headers)?;
     let mut node_state = state.node_state.write().await;
     let new_quota = if let Some(bytes) = payload.quota_bytes {
         bytes
@@ -273,22 +344,26 @@ async fn get_bandwidth(State(state): State<AppState>) -> Json<BandwidthLimitResp
 
 async fn set_bandwidth(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<BandwidthLimitRequest>,
-) -> (StatusCode, Json<BandwidthLimitResponse>) {
+) -> Result<(StatusCode, Json<BandwidthLimitResponse>), (StatusCode, String)> {
+    check_api_auth(&headers)?;
     let mut node_state = state.node_state.write().await;
     node_state.set_bandwidth_limit(payload.limit_kbps);
-    (
+    Ok((
         StatusCode::OK,
         Json(BandwidthLimitResponse {
             limit_kbps: payload.limit_kbps,
             success: true,
         }),
-    )
+    ))
 }
 
 async fn pause_node(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<LifecycleResponse>, (StatusCode, String)> {
+    check_api_auth(&headers)?;
     let mut node_state = state.node_state.write().await;
     node_state
         .pause()
@@ -301,7 +376,9 @@ async fn pause_node(
 
 async fn resume_node(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<LifecycleResponse>, (StatusCode, String)> {
+    check_api_auth(&headers)?;
     let mut node_state = state.node_state.write().await;
     node_state
         .resume()
@@ -314,7 +391,9 @@ async fn resume_node(
 
 async fn leave_node(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<LifecycleResponse>, (StatusCode, String)> {
+    check_api_auth(&headers)?;
     let mut node_state = state.node_state.write().await;
     node_state
         .leave()
@@ -327,8 +406,10 @@ async fn leave_node(
 
 async fn create_invite(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<CreateInviteRequest>,
 ) -> Result<Json<CreateInviteResponse>, (StatusCode, String)> {
+    check_api_auth(&headers)?;
     let node_state = state.node_state.read().await;
     let network_id = payload
         .network_id
@@ -460,9 +541,9 @@ async fn upload_file(
     let mut salt = None;
     let mut k = None;
     let mut m = None;
-    let mut data = None;
+    let mut temp_path_opt: Option<std::path::PathBuf> = None;
 
-    while let Some(field) = multipart
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
@@ -493,12 +574,30 @@ async fn upload_file(
                 )
             }
             "file" => {
-                data = Some(
-                    field
-                        .bytes()
-                        .await
-                        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?,
-                );
+                let temp_file = tempfile::NamedTempFile::new().map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to create temporary upload file: {}", e),
+                    )
+                })?;
+                let mut std_file = temp_file
+                    .reopen()
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                while let Some(chunk) = field
+                    .chunk()
+                    .await
+                    .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
+                {
+                    use std::io::Write;
+                    std_file
+                        .write_all(&chunk)
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                }
+                use std::io::Write;
+                std_file
+                    .flush()
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                temp_path_opt = Some(temp_file.into_temp_path().to_path_buf());
             }
             _ => {}
         }
@@ -510,14 +609,16 @@ async fn upload_file(
     let salt = salt.ok_or((StatusCode::BAD_REQUEST, "salt required".to_string()))?;
     let k = k.ok_or((StatusCode::BAD_REQUEST, "k required".to_string()))?;
     let m = m.ok_or((StatusCode::BAD_REQUEST, "m required".to_string()))?;
-    let data = data.ok_or((StatusCode::BAD_REQUEST, "file data required".to_string()))?;
+    let temp_path =
+        temp_path_opt.ok_or((StatusCode::BAD_REQUEST, "file data required".to_string()))?;
 
     let (tx, rx) = oneshot::channel();
     state
         .network_tx
         .send(Command::Upload {
             file_id,
-            data: data.to_vec(),
+            temp_file_path: Some(temp_path),
+            data: None,
             passphrase: passphrase.into_bytes(),
             salt: salt.into_bytes(),
             k,
@@ -535,20 +636,49 @@ async fn upload_file(
     Ok(Json(manifest))
 }
 
-async fn download_file(
+async fn download_file_post(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
-    Query(query): Query<DownloadQuery>,
+    headers: axum::http::HeaderMap,
+    payload: Option<Json<DownloadPayload>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let payload = payload.map(|Json(p)| p).unwrap_or_default();
+    let passphrase = payload
+        .passphrase
+        .or_else(|| {
+            headers
+                .get("x-mesh-passphrase")
+                .and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+        })
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "passphrase required in request body or X-Mesh-Passphrase header".to_string(),
+        ))?;
+
+    let salt = payload
+        .salt
+        .or_else(|| {
+            headers
+                .get("x-mesh-salt")
+                .and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+        })
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "salt required in request body or X-Mesh-Salt header".to_string(),
+        ))?;
+
+    let k = payload.k.unwrap_or(2);
+    let m = payload.m.unwrap_or(1);
+
     let (tx, rx) = oneshot::channel();
     state
         .network_tx
         .send(Command::Download {
             file_id,
-            passphrase: query.passphrase.into_bytes(),
-            salt: query.salt.into_bytes(),
-            k: query.k,
-            m: query.m,
+            passphrase: passphrase.into_bytes(),
+            salt: salt.into_bytes(),
+            k,
+            m,
             response: tx,
         })
         .await
@@ -560,6 +690,21 @@ async fn download_file(
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
 
     Ok(file_data)
+}
+
+async fn download_file_get(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    if query.contains_key("passphrase") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Security violation: Passphrases in query strings are rejected to prevent leakage in logs/history. Use POST /api/v1/download/:file_id with request body or pass X-Mesh-Passphrase header.".to_string(),
+        ));
+    }
+    download_file_post(State(state), Path(file_id), headers, None).await
 }
 
 async fn get_peer_reliability(
@@ -729,8 +874,10 @@ mesh_bandwidth_limit_kbps {}
 
 async fn export_backup(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<BackupExportRequest>,
 ) -> Result<Json<BackupExportResponse>, (StatusCode, String)> {
+    check_api_auth(&headers)?;
     let s = state.node_state.read().await;
     let snapshot = s.create_backup_snapshot();
     let archive = mesh_core::create_encrypted_backup(&snapshot, &payload.passphrase)
@@ -745,8 +892,10 @@ async fn export_backup(
 
 async fn restore_backup(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<BackupRestoreRequest>,
 ) -> Result<Json<BackupRestoreResponse>, (StatusCode, String)> {
+    check_api_auth(&headers)?;
     let archive_bytes = hex::decode(&payload.archive_hex)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid hex: {}", e)))?;
     let snapshot = mesh_core::restore_encrypted_backup(&archive_bytes, &payload.passphrase)
@@ -819,9 +968,13 @@ mod tests {
         let export_req = BackupExportRequest {
             passphrase: "secure_dr_passphrase_123".to_string(),
         };
-        let export_resp = export_backup(State(app_state.clone()), Json(export_req))
-            .await
-            .expect("export ok");
+        let export_resp = export_backup(
+            State(app_state.clone()),
+            axum::http::HeaderMap::new(),
+            Json(export_req),
+        )
+        .await
+        .expect("export ok");
         assert!(export_resp.bytes > 0);
         assert!(!export_resp.archive_hex.is_empty());
 
@@ -840,9 +993,13 @@ mod tests {
             passphrase: "secure_dr_passphrase_123".to_string(),
             archive_hex: export_resp.archive_hex.clone(),
         };
-        let restore_resp = restore_backup(State(app_state2.clone()), Json(restore_req))
-            .await
-            .expect("restore ok");
+        let restore_resp = restore_backup(
+            State(app_state2.clone()),
+            axum::http::HeaderMap::new(),
+            Json(restore_req),
+        )
+        .await
+        .expect("restore ok");
         assert!(restore_resp.success);
         assert_eq!(restore_resp.restored_peers, 1);
 
@@ -853,5 +1010,75 @@ mod tests {
                 .peer_credits
                 .contains_key("12D3KooWRemoteNode")
         );
+    }
+
+    #[tokio::test]
+    async fn test_reject_passphrase_in_query_params() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let key = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id = libp2p::PeerId::from(key.public());
+        let node_state = NodeState::with_data_dir(peer_id, temp_dir.path().to_path_buf(), 1.0);
+        let (tx, _rx) = mpsc::channel(1);
+        let app_state = AppState {
+            node_state: Arc::new(RwLock::new(node_state)),
+            network_tx: tx,
+        };
+
+        let mut query = std::collections::HashMap::new();
+        query.insert("passphrase".to_string(), "leaked_in_url".to_string());
+        query.insert("salt".to_string(), "00112233".to_string());
+
+        let res = download_file_get(
+            State(app_state),
+            Path("test_file_id".to_string()),
+            axum::http::HeaderMap::new(),
+            Query(query),
+        )
+        .await;
+
+        let err = res.err().expect("should return error");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(
+            err.1
+                .contains("Security violation: Passphrases in query strings are rejected")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_api_auth_enforcement() {
+        unsafe {
+            std::env::set_var("MESH_API_KEY", "super_secret_admin_token");
+        }
+
+        let mut headers = axum::http::HeaderMap::new();
+        // Missing header -> Unauthorized
+        let res1 = check_api_auth(&headers);
+        assert_eq!(res1.err().unwrap().0, StatusCode::UNAUTHORIZED);
+
+        // Wrong header -> Unauthorized
+        headers.insert("x-mesh-api-key", "wrong_token".parse().unwrap());
+        let res2 = check_api_auth(&headers);
+        assert_eq!(res2.err().unwrap().0, StatusCode::UNAUTHORIZED);
+
+        // Correct header -> OK
+        headers.insert(
+            "x-mesh-api-key",
+            "super_secret_admin_token".parse().unwrap(),
+        );
+        let res3 = check_api_auth(&headers);
+        assert!(res3.is_ok());
+
+        // Bearer token -> OK
+        let mut bearer_headers = axum::http::HeaderMap::new();
+        bearer_headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer super_secret_admin_token".parse().unwrap(),
+        );
+        let res4 = check_api_auth(&bearer_headers);
+        assert!(res4.is_ok());
+
+        unsafe {
+            std::env::remove_var("MESH_API_KEY");
+        }
     }
 }

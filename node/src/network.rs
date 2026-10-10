@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, StreamExt};
+use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, StreamExt};
 use libp2p::{
     Multiaddr, PeerId, Swarm, autonat, gossipsub, identify, kad, mdns, noise, ping, relay,
     request_response::{self, Codec, ProtocolSupport},
@@ -51,6 +51,8 @@ pub enum ShardResponse {
     Error(String),
 }
 
+pub const MAX_MESSAGE_SIZE: u64 = 16 * 1024 * 1024; // 16 MB maximum message limit
+
 #[derive(Clone, Default)]
 pub struct JsonCodec;
 
@@ -69,7 +71,14 @@ impl Codec for JsonCodec {
         T: AsyncRead + Unpin + Send,
     {
         let mut vec = Vec::new();
-        futures::io::copy(io, &mut vec).await?;
+        let mut limited = io.take(MAX_MESSAGE_SIZE);
+        limited.read_to_end(&mut vec).await?;
+        if vec.len() as u64 >= MAX_MESSAGE_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Request exceeded maximum message limit of 16MB",
+            ));
+        }
         serde_json::from_slice(&vec)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
@@ -83,7 +92,14 @@ impl Codec for JsonCodec {
         T: AsyncRead + Unpin + Send,
     {
         let mut vec = Vec::new();
-        futures::io::copy(io, &mut vec).await?;
+        let mut limited = io.take(MAX_MESSAGE_SIZE);
+        limited.read_to_end(&mut vec).await?;
+        if vec.len() as u64 >= MAX_MESSAGE_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Response exceeded maximum message limit of 16MB",
+            ));
+        }
         serde_json::from_slice(&vec)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
@@ -196,7 +212,8 @@ impl From<autonat::Event> for MyBehaviourEvent {
 pub enum Command {
     Upload {
         file_id: String,
-        data: Vec<u8>,
+        temp_file_path: Option<std::path::PathBuf>,
+        data: Option<Vec<u8>>,
         passphrase: Vec<u8>,
         salt: Vec<u8>,
         k: usize,
@@ -752,6 +769,7 @@ impl NetworkService {
         match cmd {
             Command::Upload {
                 file_id,
+                temp_file_path,
                 data,
                 passphrase,
                 salt,
@@ -764,6 +782,7 @@ impl NetworkService {
                 tokio::spawn(async move {
                     let res = perform_upload_async(
                         file_id,
+                        temp_file_path,
                         data,
                         passphrase,
                         salt,
@@ -908,7 +927,8 @@ async fn perform_pair_async(
 #[allow(clippy::too_many_arguments)]
 async fn perform_upload_async(
     file_id: String,
-    data: Vec<u8>,
+    temp_file_path: Option<std::path::PathBuf>,
+    data: Option<Vec<u8>>,
     passphrase: Vec<u8>,
     salt: Vec<u8>,
     k: usize,
@@ -918,9 +938,19 @@ async fn perform_upload_async(
     self_tx: mpsc::Sender<Command>,
 ) -> Result<FileManifest> {
     info!("Starting upload for file ID: {}", file_id);
-    // 1. Encode file in core library
-    let (manifest, encoded_chunks) = encode_file(&data, &passphrase, &salt, &file_id, k, m)
-        .map_err(|e| anyhow!("Core encode error: {}", e))?;
+    // 1. Encode file in core library (uses streaming encode_reader if temp_file_path provided)
+    let (manifest, encoded_chunks) = if let Some(ref path) = temp_file_path {
+        let f = std::fs::File::open(path)
+            .map_err(|e| anyhow!("Failed to open temp upload file: {}", e))?;
+        let res = mesh_core::encode_reader(f, &passphrase, &salt, &file_id, k, m)
+            .map_err(|e| anyhow!("Core encode reader error: {}", e))?;
+        let _ = std::fs::remove_file(path);
+        res
+    } else {
+        let raw = data.unwrap_or_default();
+        encode_file(&raw, &passphrase, &salt, &file_id, k, m)
+            .map_err(|e| anyhow!("Core encode error: {}", e))?
+    };
 
     // 2. Select storage nodes for each shard of each chunk.
     let peers = {

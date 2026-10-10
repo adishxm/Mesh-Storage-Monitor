@@ -1063,8 +1063,8 @@ async fn perform_download_async(
     file_id: String,
     passphrase: Vec<u8>,
     salt: Vec<u8>,
-    k: usize,
-    m: usize,
+    _k: usize,
+    _m: usize,
     state: Arc<RwLock<NodeState>>,
     swarm_local_peer_id: PeerId,
     self_tx: mpsc::Sender<Command>,
@@ -1078,6 +1078,9 @@ async fn perform_download_async(
             .ok_or_else(|| anyhow!("Manifest for file {} not found locally", file_id))?
     };
 
+    let k = manifest.k;
+    let m = manifest.m;
+
     let peers = {
         let s = state.read().await;
         let mut list = Vec::new();
@@ -1087,6 +1090,14 @@ async fn perform_download_async(
         }
         list
     };
+
+    if peers.len() < k + m {
+        return Err(anyhow!(
+            "Insufficient nodes for download: have {} nodes, but manifest requires {}",
+            peers.len(),
+            k + m
+        ));
+    }
 
     let mut retrieved_shards = Vec::new();
 

@@ -33,6 +33,24 @@ A secure, decentralized, peer-to-peer storage network designed for local and glo
            └─────────────────────────┘       └─────────────────────────┘
 ```
 
+---
+
+## Live Quick Start (Windows Launcher & Dashboard)
+
+For immediate local or LAN deployment on Windows, execute [`launch.bat`](file:///c:/Users/adity/OneDrive/Desktop/p2p%20network/launch.bat):
+
+1. **Double-click `launch.bat`** (or run `.\launch.bat` in PowerShell/CMD).
+2. **Select `[1]`** to start the primary Anchor Node on port `4001` (HTTP API `3000`) and automatically open the visual dashboard in your browser (`http://localhost:3000/`).
+3. **Select `[2]`** in a second terminal to spawn a secondary peer node on port `4002` (HTTP API `3001`).
+4. **Scan & Join from Any Mobile Device**: Click the **"Scan & Join"** button in the dashboard header to generate live QR codes for:
+   - Direct Web URL: `http://<LAN_IP>:3000/`
+   - P2P Swarm Multiaddress: `/ip4/<LAN_IP>/tcp/4001/p2p/<PEER_ID>`
+   - Signed Cryptographic Invitations for zero-trust mutual authentication.
+
+For the comprehensive multi-device step-by-step physical manual, see [`LAUNCH_GUIDE.md`](file:///c:/Users/adity/OneDrive/Desktop/p2p%20network/LAUNCH_GUIDE.md).
+
+---
+
 ### System Crates & Components
 
 1. **[`/core`](file:///c:/Users/adity/OneDrive/Desktop/p2p%20network/core)**: Pure Rust storage engine with zero network dependencies:

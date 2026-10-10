@@ -28,6 +28,33 @@
 
 ---
 
+## One-Click Windows Launcher (`launch.bat`)
+
+For Windows users, [`launch.bat`](file:///c:/Users/adity/OneDrive/Desktop/p2p%20network/launch.bat) automates local LAN IP detection, security key initialization, node startup, and browser opening with a simple interactive menu:
+
+```cmd
+======================================================================
+          MESH STORAGE NETWORK - DECENTRALIZED P2P CLOUD
+======================================================================
+[OK] Detected LAN IPv4 Address: 192.168.29.65
+
+  [1] Start Anchor Node (Node 1) on Port 4001 & Open Dashboard  (Recommended)
+  [2] Start Second Peer Node (Node 2) on Port 4002 / API 3001
+  [3] Open Visual Dashboard in Default Browser
+  [4] Run Full Workspace Test Suite (cargo test --workspace)
+  [5] Exit
+======================================================================
+```
+
+* **Select `[1]`**: Automatically detects your LAN IP, exports `MESH_API_KEY=mesh_secret_lan_key_987`, launches the Anchor Node on `0.0.0.0:4001` (HTTP API `3000`), and opens the dashboard in your default browser.
+* **Select `[2]`**: Starts a secondary peer node on P2P port `4002` and API port `3001` on the same machine for instantaneous local multi-node cluster testing.
+* **Mobile Direct Scan & Join**: In the dashboard header, click **"Scan & Join"** to generate live QR codes for:
+  1. Direct Mobile Browser URL (`http://<LAN_IP>:3000/`)
+  2. libp2p Node Multiaddress (`/ip4/<LAN_IP>/tcp/4001/p2p/<PEER_ID>`)
+  3. Signed Cryptographic Invitation Tokens with expiration and mutual authorization.
+
+---
+
 ## Prerequisites & Checklist
 
 1. **At least 2 physical devices** (e.g., Windows PC + Laptop/Mac/Linux) connected to the **same local Wi-Fi or router network**.

@@ -1,7 +1,7 @@
 use mesh_core::{
     chunking::{chunk_data, chunk_stream},
     crypto::{derive_file_key, derive_master_key, derive_shard_iv, encrypt_data},
-    decode_file, encode_file,
+    decode_file, encode_file, encode_reader,
     erasure::encode_data,
     format::{ShardHeader, pack_shard, unpack_shard},
     merkle::hash_data,
@@ -251,4 +251,33 @@ fn test_streaming_chunker_bounded_memory() {
     // Verify exact reconstruction
     let reassembled: Vec<u8> = chunks.into_iter().flatten().collect();
     assert_eq!(reassembled, raw_data);
+}
+
+#[test]
+fn test_encode_reader_streaming_roundtrip() {
+    let mut large_stream_data = vec![0u8; 3 * 1024 * 1024];
+    for (i, b) in large_stream_data.iter_mut().enumerate() {
+        *b = (i % 251) as u8;
+    }
+    let passphrase = b"streaming_pass_999";
+    let salt = b"streaming_salt_999";
+    let file_id = "streaming-file-uuid";
+    let k = 2;
+    let m = 1;
+
+    let cursor = std::io::Cursor::new(large_stream_data.clone());
+    let (manifest, encoded_chunks) =
+        encode_reader(cursor, passphrase, salt, file_id, k, m).expect("encode_reader succeeds");
+
+    assert_eq!(manifest.original_len, large_stream_data.len());
+    assert!(!manifest.chunks.is_empty());
+
+    let shards_present: Vec<Vec<Option<Vec<u8>>>> = encoded_chunks
+        .iter()
+        .map(|chunk| chunk.iter().map(|s| Some(s.clone())).collect())
+        .collect();
+
+    let decoded =
+        decode_file(&manifest, passphrase, salt, &shards_present, k, m).expect("decode succeeds");
+    assert_eq!(decoded, large_stream_data);
 }

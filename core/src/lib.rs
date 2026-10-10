@@ -10,7 +10,6 @@ pub mod merkle;
 pub mod quota;
 pub mod repair;
 
-use crate::chunking::chunk_data;
 use crate::crypto::{
     decrypt_data, derive_file_key, derive_master_key, derive_shard_iv, encrypt_data,
 };
@@ -98,11 +97,11 @@ pub struct ChunkManifest {
     pub original_len: usize,
 }
 
-/// Fully encodes a file: chunking -> Reed-Solomon -> Encryption -> Merkle DAG.
-/// Returns the file manifest and the encrypted shards (grouped by chunk).
+/// Fully encodes an arbitrary `std::io::Read` stream: streaming chunking via FastCDC -> Reed-Solomon -> Encryption -> Merkle DAG.
+/// Operates in bounded memory without loading entire files into RAM.
 #[allow(clippy::type_complexity)]
-pub fn encode_file(
-    data: &[u8],
+pub fn encode_reader<R: std::io::Read>(
+    reader: R,
     passphrase: &[u8],
     salt: &[u8],
     file_id: &str,
@@ -112,12 +111,14 @@ pub fn encode_file(
     let master_key = derive_master_key(passphrase, salt).map_err(|e| e.to_string())?;
     let file_key = derive_file_key(&master_key, salt, file_id.as_bytes());
 
-    let chunks = chunk_data(data);
+    let chunks = chunking::chunk_stream(reader).map_err(|e| e.to_string())?;
     let mut chunk_manifests = Vec::new();
     let mut all_encrypted_shards = Vec::new();
     let mut chunk_hashes = Vec::new();
+    let mut total_original_len = 0;
 
     for (chunk_idx, chunk) in chunks.into_iter().enumerate() {
+        total_original_len += chunk.len();
         let original_chunk_len = chunk.len();
         // Reed-Solomon encode plaintext chunk
         let plain_shards = encode_data(&chunk, k, m).map_err(|e| e.to_string())?;
@@ -155,7 +156,7 @@ pub fn encode_file(
         schema_version: 2,
         file_id: file_id.to_string(),
         file_name: None,
-        original_len: data.len(),
+        original_len: total_original_len,
         root_hash,
         k,
         m,
@@ -165,6 +166,20 @@ pub fn encode_file(
     };
 
     Ok((manifest, all_encrypted_shards))
+}
+
+/// Fully encodes a file: chunking -> Reed-Solomon -> Encryption -> Merkle DAG.
+/// Returns the file manifest and the encrypted shards (grouped by chunk).
+#[allow(clippy::type_complexity)]
+pub fn encode_file(
+    data: &[u8],
+    passphrase: &[u8],
+    salt: &[u8],
+    file_id: &str,
+    k: usize,
+    m: usize,
+) -> Result<(FileManifest, Vec<Vec<Vec<u8>>>), String> {
+    encode_reader(std::io::Cursor::new(data), passphrase, salt, file_id, k, m)
 }
 
 /// Fully decodes a file given its manifest, key details, and shards.

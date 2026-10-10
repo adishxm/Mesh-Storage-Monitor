@@ -1,193 +1,265 @@
 # System Execution & Verification Guide
 
-This document contains step-by-step instructions to compile, run, and verify the P2P Mesh Storage Network, both locally (on a single machine using multiple processes) and across multiple physical devices on the same Wi-Fi network.
+This document contains step-by-step instructions to compile, test, run, and verify the decentralized P2P Mesh Storage Network across all components: pure Rust storage engine, canonical libp2p node daemon, operator CLI, terminal telemetry, multi-tenant SaaS control plane, Android native bridge, and legacy Node test suite.
 
 ---
 
-## 1. Running Unit Tests
+## 1. Automated Test Suites & Verification
 
-To run the `/core` logic tests (chunking, Reed-Solomon encoding, AES-GCM encryption, and Merkle tree generation):
+The project is structured as a multi-crate Cargo workspace alongside an audited legacy Node reference suite.
+
+### A. Run Full Rust Workspace Tests
+Executes all unit, integration, deterministic repair, and cryptographic tests across all 6 workspace crates:
 
 ```powershell
-# In PowerShell (using custom target directory to avoid Windows OneDrive file locks):
-$env:CARGO_TARGET_DIR="$env:USERPROFILE\.gemini\antigravity-ide\scratch\cargo-target"
-cargo test
+# In PowerShell:
+cargo test --workspace
 ```
 
-This will run all 12 tests in `/core`, including the 20MB file round-trip reconstruction test.
+* **Observed Result**: **120 tests passed, 0 failed**.
+  - `mesh-core` (62 tests): FastCDC chunking, Reed-Solomon Galois $GF(2^8)$ erasure coding, Argon2id/AES-256-GCM encryption, deterministic IVs, Merkle DAG verification, Sybil subnet limits, and `.mbak` disaster recovery.
+  - `mesh-node` (33 tests): P2P state machine, LAN 3-node cluster recovery, proof-of-storage audits, self-healing repair, loopback authentication guards, and Prometheus telemetry.
+  - `mesh-control-plane` (23 tests): Bearer JWT authentication, anti-spoofing header guards, PostgreSQL migrations, row-level locking (`FOR UPDATE`), and tenant quota isolation.
+  - `mesh-cli` (9 tests): Streaming request handling, passphrase resolution, and command parsing.
+  - `terminal-ui` (3 tests): Live ASCII gauge rendering and ANSI progress meters.
+
+### B. Zero-Warning Linter & Formatting Gates
+Enforce strict compiler and code quality standards:
+
+```powershell
+# Clippy check (0 warnings allowed)
+cargo clippy --workspace --all-targets -- -D warnings
+
+# Code formatting check
+cargo fmt --all -- --check
+```
+
+### C. Legacy Node Core Engine Test & Audit
+Verify the reference JavaScript implementation and ensure zero npm vulnerabilities:
+
+```powershell
+# Run legacy core reconstruction test
+npm test --prefix node_version
+
+# Verify zero known CVEs (Multer 2.x upgraded)
+npm audit --prefix node_version
+```
+
+* **Observed Result**: 4/4 tests passed (normal decode, missing shard recovery, corrupted shard reconstruction, and excessive corruption fail-closed); **0 vulnerabilities found**.
 
 ---
 
-## 2. Testing Locally (Multi-Process on One Machine)
+## 2. Testing Locally (Multi-Process on Single Machine)
 
-Testing with multiple local processes is the easiest way to verify P2P coordination, Kademlia routing, and shard distribution.
+Running multiple local nodes verifies P2P discovery, Noise handshake authentication, Kademlia routing, and decentralized shard distribution.
 
 ### Step A: Start Node 1 (Anchor Node)
-Start the first node. By default, it uses P2P port `4001` and HTTP API port `3000`.
+By default, the HTTP API binds to **loopback only** (`127.0.0.1:3000`) for secure local development:
 
 ```powershell
-$env:CARGO_TARGET_DIR="$env:USERPROFILE\.gemini\antigravity-ide\scratch\cargo-target"
 cargo run -p mesh-node -- --port 4001 --api-port 3000 --quota 1.5
 ```
 
-Keep this terminal open. Look for the console logs:
+Terminal log indicators:
 * `Local Peer ID: <PEER_ID_1>` (e.g., `12D3KooWN1Xy...`)
-* `Starting HTTP API server on 0.0.0.0:3000`
-* `Swarm listening on address: /ip4/127.0.0.1/tcp/4001` (and other local IP addresses)
+* `Starting HTTP API server on 127.0.0.1:3000`
+* `Swarm listening on address: /ip4/127.0.0.1/tcp/4001`
 
 ### Step B: Start Node 2 (Peer Node)
-Start the second node on different ports (P2P port `4002` and HTTP API port `3001`):
+Start the second node on distinct P2P and API ports:
 
 ```powershell
-$env:CARGO_TARGET_DIR="$env:USERPROFILE\.gemini\antigravity-ide\scratch\cargo-target"
 cargo run -p mesh-node -- --port 4002 --api-port 3001 --quota 1.5
 ```
 
-Keep this terminal open. Look for:
+Terminal log indicators:
 * `Local Peer ID: <PEER_ID_2>` (e.g., `12D3KooWR45c...`)
-* `Starting HTTP API server on 0.0.0.0:3001`
+* `Starting HTTP API server on 127.0.0.1:3001`
 * `Swarm listening on address: /ip4/127.0.0.1/tcp/4002`
 
-### Step C: Pair Node 1 and Node 2
-Because of the **Noise transport authentication**, nodes will reject connection handshakes from untrusted Peer IDs. We need to trigger the **pairing exchange** between them.
-
-Use PowerShell or `curl` to pair Node 1 to Node 2:
-
-* **Using PowerShell (PowerShell 6+ / Core)**:
-  ```powershell
-  $body = @{ multiaddr = "/ip4/127.0.0.1/tcp/4002/p2p/<PEER_ID_2>" } | ConvertTo-Json
-  Invoke-RestMethod -Uri "http://localhost:3000/pair" -Method Post -ContentType "application/json" -Body $body
-  ```
-
-* **Using curl**:
-  ```bash
-  curl -X POST -H "Content-Type: application/json" -d '{"multiaddr": "/ip4/127.0.0.1/tcp/4002/p2p/<PEER_ID_2>"}' http://localhost:3000/pair
-  ```
-
-*(Replace `<PEER_ID_2>` with the actual Peer ID printed in Node 2's terminal.)*
-
-**What happens under the hood**:
-Node 1 dials Node 2, completes the Noise handshake, adds Node 2 to its trusted list, sends a pairing command, and Node 2 adds Node 1 to its trusted list in return. Both nodes save their peer IDs into `./data_4001/trusted_peers.json` and `./data_4002/trusted_peers.json` respectively.
-
-### Step D: Verify Pairing Status
-Check if they see each other in their `/peers` status lists:
-
-```bash
-# Get status of Node 1
-curl http://localhost:3000/status
-
-# Get status of Node 2
-curl http://localhost:3001/status
-```
-You should see each node listed in the other's `"peers"` array.
-
-### Step E: Test File Upload (Sharding & Distribution)
-Upload a test file to Node 1. We'll chunk and encode it with `k=2, m=1` (minimum 3 peers are needed for $k+m=3$; for 2 peers, use `k=1, m=1`):
-
-1. Create a dummy file:
-   ```powershell
-   "Hello world, this is a test file for the decentralized mesh storage network!" > test.txt
-   ```
-2. Upload it to Node 1 using `k=1` (1 data shard) and `m=1` (1 parity shard):
-   ```powershell
-   # PowerShell Form Upload:
-   Invoke-RestMethod -Uri "http://localhost:3000/upload" -Method Post -Form @{
-       file_id = "my-doc-1"
-       passphrase = "password123"
-       salt = "some-salt-key"
-       k = "1"
-       m = "1"
-       file = Get-Item "test.txt"
-   }
-   ```
-   *Alternative curl Command*:
-   ```bash
-   curl -F "file_id=my-doc-1" -F "passphrase=password123" -F "salt=some-salt-key" -F "k=1" -F "m=1" -F "file=@test.txt" http://localhost:3000/upload
-   ```
-
-3. **Check Shard Placement**:
-   You will receive a JSON response showing the manifest details and shard hashes.
-   Check `/shards` on Node 1:
-   ```bash
-   curl http://localhost:3000/shards
-   ```
-   Check `/shards` on Node 2:
-   ```bash
-   curl http://localhost:3001/shards
-   ```
-   One shard of the chunk will be stored in `./data_4001/shards/` and the other in `./data_4002/shards/`.
-
-### Step F: Test File Download & Reconstruction
-Now request the download of the file through Node 2 (which has to fetch the other shard from Node 1 to reconstruct it):
+### Step C: Authenticated Pairing Exchange
+Nodes enforce cryptographic **Noise transport allowlisting** and reject connections from unknown peers. Pair Node 1 with Node 2:
 
 * **Using PowerShell**:
   ```powershell
-  Invoke-RestMethod -Uri "http://localhost:3001/download/my-doc-1?passphrase=password123&salt=some-salt-key&k=1&m=1"
+  $body = @{ multiaddr = "/ip4/127.0.0.1/tcp/4002/p2p/<PEER_ID_2>" } | ConvertTo-Json
+  Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/v1/pair" -Method Post -ContentType "application/json" -Body $body
   ```
+
 * **Using curl**:
   ```bash
-  curl "http://localhost:3001/download/my-doc-1?passphrase=password123&salt=some-salt-key&k=1&m=1"
+  curl -X POST -H "Content-Type: application/json" \
+       -d '{"multiaddr": "/ip4/127.0.0.1/tcp/4002/p2p/<PEER_ID_2>"}' \
+       http://127.0.0.1:3000/api/v1/pair
   ```
 
-The terminal should print: `Hello world, this is a test file for the decentralized mesh storage network!`
+### Step D: Verify Mesh Status
+Confirm that both nodes have registered each other in their routing tables:
 
----
-
-## 3. Testing Across Different Devices (e.g. PC + Phone/Laptop)
-
-To test the system on different physical devices (e.g., your Windows PC and another laptop or a virtual machine on the same LAN):
-
-### Step A: Configure Firewall & Netsh
-The nodes must bind to `0.0.0.0` (which is default) and allow incoming TCP traffic. Ensure your OS firewall allows TCP ports `4001` (p2p) and `3000` (HTTP) or whatever port you choose.
-*On Windows, you can add an inbound rule manually or let the app prompt for access.*
-
-### Step B: Launch Node on Device A (Anchor Node - PC)
-Find Device A's local LAN IP address (e.g. `192.168.1.10` via `ipconfig`):
-```powershell
-cargo run -p mesh-node -- --port 4001 --api-port 3000
-```
-Note the Peer ID: e.g. `12D3KooW-PC-PEER-ID`.
-
-### Step C: Launch Node on Device B (Laptop/Device B)
-Find Device B's local LAN IP address (e.g. `192.168.1.15`). Run:
 ```bash
-cargo run -p mesh-node -- --port 4001 --api-port 3000
+curl http://127.0.0.1:3000/api/v1/status
+curl http://127.0.0.1:3001/api/v1/status
 ```
-Note the Peer ID: e.g. `12D3KooW-LAPTOP-PEER-ID`.
 
-### Step D: Pair Device B with Device A
-Send an API request to Device B's API (`http://192.168.1.15:3000`) instructing it to pair with Device A:
+### Step E: Upload & Shard Distribution
+Upload a sample file to Node 1 with Reed-Solomon parameters $k=1, m=1$:
 
-* **Using curl on Device B**:
+1. Create a sample payload:
+   ```powershell
+   "Decentralized mesh storage payload test." > test.txt
+   ```
+2. Upload via multipart form:
+   ```bash
+   curl -F "file_id=doc-alpha" \
+        -F "passphrase=correct-horse-battery" \
+        -F "salt=mysalt123" \
+        -F "k=1" \
+        -F "m=1" \
+        -F "file=@test.txt" \
+        http://127.0.0.1:3000/api/v1/upload
+   ```
+
+3. Inspect shard distribution:
+   ```bash
+   curl http://127.0.0.1:3000/api/v1/shards
+   curl http://127.0.0.1:3001/api/v1/shards
+   ```
+   Data and parity shards are distributed across `./data_4001/shards/` and `./data_4002/shards/`.
+
+### Step F: Secure Download & Reconstruction
+
+> **Security Guard:** Query-string passphrases (e.g. `?passphrase=...`) are **strictly rejected with HTTP 400 Bad Request** to prevent credential exposure in access logs, proxies, and browser histories.
+
+Use one of the secure retrieval methods:
+
+* **Option 1: POST with JSON Body (Recommended for scripts/web)**:
   ```bash
-  curl -X POST -H "Content-Type: application/json" -d '{"multiaddr": "/ip4/192.168.1.10/tcp/4001/p2p/12D3KooW-PC-PEER-ID"}' http://localhost:3000/pair
+  curl -X POST http://127.0.0.1:3001/api/v1/download/doc-alpha \
+       -H "Content-Type: application/json" \
+       -d '{"passphrase":"correct-horse-battery","salt":"mysalt123","k":1,"m":1}' \
+       --output reconstructed.txt
   ```
 
-Once paired:
-* Device B will trust Device A, and Device A will trust Device B.
-* The respective Peer IDs are added to `trusted_peers.json` on both devices.
-* mDNS will automatically discover and sync Kademlia routing entries when the devices are on the same Wi-Fi.
+* **Option 2: GET with Secure Headers**:
+  ```bash
+  curl http://127.0.0.1:3001/api/v1/download/doc-alpha \
+       -H "X-Mesh-Passphrase: correct-horse-battery" \
+       -H "X-Mesh-Salt: mysalt123" \
+       --output reconstructed.txt
+  ```
 
-### Step E: Upload & Retrieve Across Devices
-1. Upload a file on Device A:
-   ```bash
-   curl -F "file_id=lan-doc" -F "passphrase=securepass" -F "salt=mysalt" -F "k=1" -F "m=1" -F "file=@somefile.zip" http://localhost:3000/upload
-   ```
-2. Retrieve the file on Device B:
-   ```bash
-   curl -o downloaded.zip "http://localhost:3000/download/lan-doc?passphrase=securepass&salt=mysalt&k=1&m=1"
-   ```
-   Even though you uploaded on Device A, Device B can fetch the manifest, download the shards over the P2P connection, verify integrity, reconstruct, decrypt, and save the zip file.
+* **Option 3: Using the Streaming CLI Client**:
+  ```powershell
+  cargo run -p mesh-cli -- download doc-alpha \
+        --passphrase correct-horse-battery \
+        --salt mysalt123 \
+        --node-url http://127.0.0.1:3001 \
+        --out reconstructed.txt
+  ```
+
+Verify content identity:
+```powershell
+Get-Content reconstructed.txt
+```
 
 ---
 
-## 4. Verifying Security & Anti-Flood Banning
+## 3. Testing Across Physical LAN Devices (e.g. PC + Laptop/Phone)
 
-To test the security system and automatic IP banning:
+When deploying across different physical devices on a local area network:
 
-1. **Attempt Connections with an Untrusted Node**:
-   If a node that has not completed the `/pair` exchange attempts to connect to a running node, it is disconnected immediately on connection establishment.
-2. **Brute Force Detection**:
-   If an untrusted node makes **5 failed connection attempts within 60 seconds**:
-   * The victim node bans the attacker's IP for 30 minutes in-memory.
-   * If running with Administrator privileges on Windows, the node automatically executes `netsh advfirewall firewall add rule...` to block the attacker's IP at the OS layer.
+### Step A: Interface Binding & Mandatory Authentication
+By default, the daemon binds to `127.0.0.1`. When exposing to the LAN, pass `--bind 0.0.0.0` or `-b <YOUR_LAN_IP>`.
+
+```powershell
+# Set an explicit API key for network access:
+$env:MESH_API_KEY = "mesh_secret_lan_key_987"
+cargo run -p mesh-node -- --bind 0.0.0.0 --port 4001 --api-port 3000
+```
+
+> **Security Note:** If `--bind 0.0.0.0` is used without `MESH_API_KEY`, the daemon generates an **ephemeral cryptographic key**, prints a prominent security alert banner in the console, and refuses unauthenticated non-loopback requests.
+
+### Step B: Pairing Across LAN
+On Device B (e.g. laptop at `192.168.1.15`), instruct the node to pair with Device A (`192.168.1.10`):
+
+```bash
+curl -X POST http://192.168.1.15:3000/api/v1/pair \
+     -H "Content-Type: application/json" \
+     -H "X-Mesh-Api-Key: mesh_secret_lan_key_987" \
+     -d '{"multiaddr": "/ip4/192.168.1.10/tcp/4001/p2p/<DEVICE_A_PEER_ID>"}'
+```
+
+### Step C: Authenticated Remote Operations
+All requests from remote devices must provide the key:
+
+```bash
+curl -H "X-Mesh-Api-Key: mesh_secret_lan_key_987" http://192.168.1.10:3000/api/v1/status
+```
+
+---
+
+## 4. Multi-Tenant SaaS Control Plane Verification
+
+The `mesh-control-plane` crate provides organization-level isolation and device lifecycle management.
+
+### A. Bearer JWT Authentication & Anti-Spoofing
+The control plane requires standard Bearer tokens:
+
+```bash
+# Correct: Authorized Bearer JWT
+curl -H "Authorization: Bearer <VALID_JWT>" http://127.0.0.1:8080/api/v1/control/tenants
+
+# Blocked: Client-provided headers (x-oidc-sub, x-oidc-tenant, etc.) without INTERNAL_GATEWAY_SECRET are rejected with 401 Unauthorized
+```
+
+### B. Persistent Repository Selection
+* **PostgreSQL SaaS Mode (Production)**:
+  Set `DATABASE_URL` to automatically run database migrations and use row-locked transactional invite consumption (`FOR UPDATE`):
+  ```powershell
+  $env:DATABASE_URL = "postgres://mesh_user:password@localhost:5432/mesh_control"
+  cargo run -p mesh-control-plane
+  ```
+* **Single-Process Persistent Prototype**:
+  Set `CONTROL_PLANE_DB_PATH` to use disk-persisted atomic JSON snapshots (suitable for solo testing):
+  ```powershell
+  $env:CONTROL_PLANE_DB_PATH = "./control_plane_db.json"
+  cargo run -p mesh-control-plane
+  ```
+
+---
+
+## 5. Android Native Packaging & Instrumentation Testing
+
+The Android subsystem bridges the pure Rust core to Kotlin/Compose using `android-bridge`.
+
+### A. Compile Native `.so` Libraries
+Use `cargo-ndk` to cross-compile the JNI bridge for all target mobile architectures:
+
+```bash
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
+      -o android/app/src/main/jniLibs \
+      build --release -p android-bridge
+```
+
+### B. Run Android Instrumentation Tests
+Executes on an emulator or physical connected test device:
+
+```bash
+cd android
+./gradlew connectedAndroidTest
+```
+
+---
+
+## 6. Verification Summary Checklist
+
+| Component | Target Command | Acceptance Criteria |
+| :--- | :--- | :--- |
+| **Full Workspace** | `cargo test --workspace` | 120 tests passed, 0 failures |
+| **Clippy Linter** | `cargo clippy --workspace --all-targets -- -D warnings` | 0 warnings |
+| **Code Style** | `cargo fmt --all -- --check` | 0 formatting diffs |
+| **Legacy Core Node** | `npm test --prefix node_version` | 4 tests passed |
+| **Dependency CVEs** | `npm audit --prefix node_version` | 0 vulnerabilities |
+| **API Auth Guard** | Non-loopback request without `MESH_API_KEY` | Rejection with `401 Unauthorized` |
+| **Download Security**| `GET /download/:id?passphrase=...` | Rejection with `400 Bad Request` |
+| **Control Plane Auth**| Public request with spoofed `x-oidc-*` headers | Rejection with `401 Unauthorized` |

@@ -6,7 +6,8 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::models::{
-    Device, DeviceStatus, DeviceType, Invite, OidcClaims, Tenant, TenantMetrics, TenantStatus,
+    Device, DeviceStatus, DeviceType, Invite, OidcClaims, PeerCreditReport, Tenant, TenantMetrics,
+    TenantStatus,
 };
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -57,6 +58,7 @@ pub struct ControlPlaneService {
     tenants: Arc<RwLock<HashMap<String, Tenant>>>,
     devices: Arc<RwLock<HashMap<String, Device>>>,
     invites: Arc<RwLock<HashMap<String, Invite>>>,
+    credits: Arc<RwLock<HashMap<String, mesh_core::CreditLedger>>>,
 }
 
 impl ControlPlaneService {
@@ -416,5 +418,50 @@ impl ControlPlaneService {
             desktop_devices,
             server_devices,
         })
+    }
+
+    pub async fn get_peer_credit_report(&self, peer_id: &str) -> PeerCreditReport {
+        let mut credits = self.credits.write().await;
+        let ledger = credits.entry(peer_id.to_string()).or_insert_with(|| {
+            mesh_core::CreditLedger::new(peer_id.to_string(), Utc::now().timestamp() as u64)
+        });
+
+        let base_free = 1_073_741_824; // 1 GB free base
+        let ratio = 1.0;
+        let cap = 100_000_000_000; // 100 GB cap
+        PeerCreditReport {
+            peer_id: peer_id.to_string(),
+            tier: ledger.evaluate_tier(base_free, ratio, cap),
+            bytes_contributed: ledger.bytes_contributed,
+            bytes_consumed: ledger.bytes_consumed,
+            earned_allowance_bytes: ledger.earned_allowance_bytes(base_free, ratio, cap),
+            credit_balance: ledger.credit_balance(base_free, ratio, cap),
+            fair_share_ratio: ledger.fair_share_ratio(),
+            audits_passed: ledger.audits_passed,
+            audits_failed: ledger.audits_failed,
+        }
+    }
+
+    pub async fn record_peer_storage_activity(
+        &self,
+        peer_id: &str,
+        contributed_delta: u64,
+        consumed_delta: u64,
+        audit_pass: Option<bool>,
+    ) {
+        let mut credits = self.credits.write().await;
+        let ledger = credits.entry(peer_id.to_string()).or_insert_with(|| {
+            mesh_core::CreditLedger::new(peer_id.to_string(), Utc::now().timestamp() as u64)
+        });
+
+        if contributed_delta > 0 {
+            ledger.record_storage_contribution(contributed_delta);
+        }
+        if consumed_delta > 0 {
+            ledger.record_storage_consumption(consumed_delta);
+        }
+        if let Some(passed) = audit_pass {
+            ledger.record_audit(passed);
+        }
     }
 }

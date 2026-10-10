@@ -48,6 +48,9 @@ pub struct NodeState {
     pub relay_addresses: HashSet<Multiaddr>,
     pub bandwidth_limiter: Option<mesh_core::BandwidthLimiter>,
     pub peer_reliability: HashMap<String, mesh_core::PeerReliabilityTracker>,
+    pub local_credits: mesh_core::CreditLedger,
+    pub peer_credits: HashMap<String, mesh_core::CreditLedger>,
+    pub subnet_guard: mesh_core::SubnetDensityGuard,
 }
 
 #[allow(dead_code)]
@@ -66,6 +69,11 @@ impl NodeState {
             QuotaTracker::from_policy(quota_bytes, &QuotaPolicy::AbsoluteBytes(quota_bytes))
                 .unwrap_or_else(|_| QuotaTracker::new(quota_bytes, quota_bytes));
 
+        let now_sec = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
         let mut state = Self {
             peer_id,
             state: NodeLifecycleState::Active,
@@ -81,6 +89,9 @@ impl NodeState {
             relay_addresses: HashSet::new(),
             bandwidth_limiter: None,
             peer_reliability: HashMap::new(),
+            local_credits: mesh_core::CreditLedger::new(peer_id.to_string(), now_sec),
+            peer_credits: HashMap::new(),
+            subnet_guard: mesh_core::SubnetDensityGuard::new(3),
         };
 
         state.load_trusted_peers();
@@ -276,6 +287,7 @@ impl NodeState {
         }
 
         self.storage_used = self.quota_tracker.used_bytes;
+        self.local_credits.record_storage_contribution(shard_len);
         Ok(())
     }
 
@@ -422,6 +434,11 @@ impl NodeState {
             .entry(peer_id.to_string())
             .or_insert_with(|| mesh_core::PeerReliabilityTracker::new(peer_id.to_string()));
         tracker.record_success(timestamp);
+
+        self.peer_credits
+            .entry(peer_id.to_string())
+            .or_insert_with(|| mesh_core::CreditLedger::new(peer_id.to_string(), timestamp))
+            .record_audit(true);
     }
 
     pub fn record_audit_failure(&mut self, peer_id: &str, timestamp: u64) {
@@ -430,6 +447,39 @@ impl NodeState {
             .entry(peer_id.to_string())
             .or_insert_with(|| mesh_core::PeerReliabilityTracker::new(peer_id.to_string()));
         tracker.record_failure(timestamp);
+
+        self.peer_credits
+            .entry(peer_id.to_string())
+            .or_insert_with(|| mesh_core::CreditLedger::new(peer_id.to_string(), timestamp))
+            .record_audit(false);
+    }
+
+    pub fn record_peer_storage(
+        &mut self,
+        peer_id: &str,
+        contributed_delta: u64,
+        consumed_delta: u64,
+    ) {
+        let entry = self
+            .peer_credits
+            .entry(peer_id.to_string())
+            .or_insert_with(|| mesh_core::CreditLedger::new(peer_id.to_string(), 0));
+        if contributed_delta > 0 {
+            entry.record_storage_contribution(contributed_delta);
+        }
+        if consumed_delta > 0 {
+            entry.record_storage_consumption(consumed_delta);
+        }
+    }
+
+    pub fn is_peer_throttled(&self, peer_id: &str) -> bool {
+        if let Some(ledger) = self.peer_credits.get(peer_id) {
+            let tier = ledger.evaluate_tier(1_073_741_824, 1.0, 50_000_000_000);
+            tier == mesh_core::ReciprocityTier::Throttled
+                || tier == mesh_core::ReciprocityTier::Suspended
+        } else {
+            false
+        }
     }
 
     pub fn get_peer_reliability(&self, peer_id: &str) -> f64 {

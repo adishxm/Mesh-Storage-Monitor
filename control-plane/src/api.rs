@@ -146,6 +146,7 @@ pub fn make_router(service: ControlPlaneService) -> Router {
             "/api/v1/control/tenants/:tenant_id/metrics",
             get(get_tenant_metrics),
         )
+        .route("/api/v1/control/credits/:peer_id", get(get_peer_credits))
         .with_state(state)
         .layer(cors)
 }
@@ -272,4 +273,12 @@ async fn get_tenant_metrics(
         .get_tenant_metrics(&claims, &tenant_id)
         .await?;
     Ok(Json(metrics))
+}
+
+async fn get_peer_credits(
+    State(state): State<ApiState>,
+    Path(peer_id): Path<String>,
+) -> impl IntoResponse {
+    let report = state.service.get_peer_credit_report(&peer_id).await;
+    (StatusCode::OK, Json(report))
 }

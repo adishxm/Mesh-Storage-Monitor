@@ -104,6 +104,31 @@ pub struct RepairCheckResponse {
     pub can_repair_all: bool,
 }
 
+#[derive(Serialize)]
+pub struct MyCreditsResponse {
+    pub peer_id: String,
+    pub tier: mesh_core::ReciprocityTier,
+    pub bytes_contributed: u64,
+    pub bytes_consumed: u64,
+    pub earned_allowance_bytes: u64,
+    pub credit_balance: i64,
+    pub fair_share_ratio: f64,
+    pub audits_passed: u64,
+    pub audits_failed: u64,
+    pub uptime_seconds: u64,
+}
+
+#[derive(Serialize)]
+pub struct PeerCreditsResponse {
+    pub peer_id: String,
+    pub tier: mesh_core::ReciprocityTier,
+    pub bytes_contributed: u64,
+    pub bytes_consumed: u64,
+    pub credit_balance: i64,
+    pub fair_share_ratio: f64,
+    pub is_throttled: bool,
+}
+
 pub fn make_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -128,6 +153,8 @@ pub fn make_router(state: AppState) -> Router {
         .route("/api/v1/download/:file_id", get(download_file))
         .route("/api/v1/reliability/:peer_id", get(get_peer_reliability))
         .route("/api/v1/repair/check/:file_id", get(check_file_repair))
+        .route("/api/v1/credits/me", get(get_my_credits))
+        .route("/api/v1/credits/peers/:peer_id", get(get_peer_credits))
         // Backward-compatibility aliases for local prototypes & dashboards
         .route("/status", get(get_status))
         .route("/peers", get(get_peers))
@@ -531,4 +558,51 @@ async fn check_file_repair(
         degraded_chunks: degraded,
         can_repair_all,
     }))
+}
+
+async fn get_my_credits(State(state): State<AppState>) -> Json<MyCreditsResponse> {
+    let s = state.node_state.read().await;
+    let base_free = 1_073_741_824; // 1 GB free base
+    let ratio = 1.0;
+    let cap = s.storage_quota * 2;
+    let ledger = &s.local_credits;
+    Json(MyCreditsResponse {
+        peer_id: s.peer_id.to_string(),
+        tier: ledger.evaluate_tier(base_free, ratio, cap),
+        bytes_contributed: ledger.bytes_contributed,
+        bytes_consumed: ledger.bytes_consumed,
+        earned_allowance_bytes: ledger.earned_allowance_bytes(base_free, ratio, cap),
+        credit_balance: ledger.credit_balance(base_free, ratio, cap),
+        fair_share_ratio: ledger.fair_share_ratio(),
+        audits_passed: ledger.audits_passed,
+        audits_failed: ledger.audits_failed,
+        uptime_seconds: ledger.uptime_seconds,
+    })
+}
+
+async fn get_peer_credits(
+    State(state): State<AppState>,
+    Path(peer_id): Path<String>,
+) -> Json<PeerCreditsResponse> {
+    let s = state.node_state.read().await;
+    let base_free = 1_073_741_824;
+    let ratio = 1.0;
+    let cap = 50_000_000_000;
+    let ledger = s
+        .peer_credits
+        .get(&peer_id)
+        .cloned()
+        .unwrap_or_else(|| mesh_core::CreditLedger::new(peer_id.clone(), 0));
+    let tier = ledger.evaluate_tier(base_free, ratio, cap);
+    let is_throttled = tier == mesh_core::ReciprocityTier::Throttled
+        || tier == mesh_core::ReciprocityTier::Suspended;
+    Json(PeerCreditsResponse {
+        peer_id,
+        tier,
+        bytes_contributed: ledger.bytes_contributed,
+        bytes_consumed: ledger.bytes_consumed,
+        credit_balance: ledger.credit_balance(base_free, ratio, cap),
+        fair_share_ratio: ledger.fair_share_ratio(),
+        is_throttled,
+    })
 }

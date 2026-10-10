@@ -162,6 +162,19 @@ pub struct TenantMetrics {
     pub server_devices: usize,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PeerCreditReport {
+    pub peer_id: String,
+    pub tier: mesh_core::ReciprocityTier,
+    pub bytes_contributed: u64,
+    pub bytes_consumed: u64,
+    pub earned_allowance_bytes: u64,
+    pub credit_balance: i64,
+    pub fair_share_ratio: f64,
+    pub audits_passed: u64,
+    pub audits_failed: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

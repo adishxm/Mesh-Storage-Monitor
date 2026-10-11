@@ -35,6 +35,211 @@ A secure, decentralized, peer-to-peer storage network designed for local and glo
 
 ---
 
+## User Journey & Workflow (For Everyday Users)
+
+How does Mesh Storage work for regular people without requiring cloud subscriptions or central servers?
+
+```mermaid
+flowchart TD
+    subgraph Step1 ["1. Upload & Instant Encryption"]
+        User(["👤 User"]):::user -->|"Drag & drop photos, documents, or videos"| App["💻 Web Dashboard / Mobile App"]:::highlight
+        App -->|"Encrypts with your personal secret key"| Vault["🔒 Locked Vault (Unreadable to anyone else)"]:::crypto
+    end
+
+    subgraph Step2 ["2. Redundant Sharding"]
+        Vault -->|"Splits file into pieces plus backup parity pieces"| Pieces["🧩 Shards: Data + Parity"]:::proc
+        Pieces -->|"Distributed securely across nearby devices"| Mesh["🌐 P2P Mesh Network"]:::network
+    end
+
+    subgraph Step3 ["3. Resilient Decentralized Storage"]
+        Mesh --> P1["💻 Peer A (Your Desktop PC)"]:::peer
+        Mesh --> P2["📱 Peer B (Your Mobile Phone)"]:::peer
+        Mesh --> P3["💻 Peer C (A Friend's Laptop)"]:::peer
+        P3 -.->|"Laptop goes offline / powered down ❌"| P3Offline["Unavailable"]:::warn
+    end
+
+    subgraph Step4 ["4. Instant Zero-Loss Retrieval"]
+        P1 -->|"Fetch Shard 1"| Recovery["⚡ Self-Healing Reconstruction"]:::highlight
+        P2 -->|"Fetch Shard 2"| Recovery
+        Recovery -->|"Reed-Solomon recreates missing piece mathematically"| Decrypt["🔓 Decrypt with your password"]:::crypto
+        Decrypt --> UserFile(["✅ 100% Exact Original File"]):::user
+    end
+
+    classDef user fill:#6366f1,stroke:#818cf8,stroke-width:2px,color:#ffffff
+    classDef highlight fill:#1e1b4b,stroke:#a855f7,stroke-width:2px,color:#ffffff
+    classDef crypto fill:#0f172a,stroke:#06b6d4,stroke-width:2px,color:#ffffff
+    classDef proc fill:#18181b,stroke:#71717a,stroke-width:2px,color:#ffffff
+    classDef network fill:#14532d,stroke:#22c55e,stroke-width:2px,color:#ffffff
+    classDef peer fill:#1e293b,stroke:#38bdf8,stroke-width:1px,color:#ffffff
+    classDef warn fill:#450a0a,stroke:#ef4444,stroke-width:1px,color:#f87171
+```
+
+---
+
+## Architecture Workflow
+
+The complete end-to-end component interaction flow, from client interfaces to the underlying cryptographic storage engine:
+
+```mermaid
+flowchart TD
+    subgraph UI ["Client & Operator Interfaces"]
+        W["🌐 Web Dashboard (dashboard.html)"]
+        CLI["⌨️ Operator CLI (mesh-cli)"]
+        TUI["📊 Terminal UI (terminal-ui)"]
+        AND["📱 Mobile App (Android Jetpack Compose)"]
+    end
+
+    subgraph API ["Gateway & Authentication Layer (mesh-node)"]
+        R["Axum REST Router (/api/v1)"]
+        AUTH["🛡️ API Key & Bearer Token Guard"]
+        STREAM["🌊 Streaming Multi-part File Reader"]
+    end
+
+    subgraph MPSC ["Coordination & Event Bus"]
+        TX["Tokio MPSC Command Channel"]
+        RX["NetworkWorker Event Loop"]
+    end
+
+    subgraph P2P ["libp2p Swarm & Network Protocols"]
+        SWARM["libp2p Swarm Manager"]
+        NOISE["🔐 Noise Transport Handshake"]
+        YAMUX["🔀 Yamux Stream Multiplexer"]
+        KAD["📍 Kademlia DHT (Distributed Routing)"]
+        GOSSIP["📢 Gossipsub (Pub/Sub Event Broadcast)"]
+        REQ["📬 Request-Response (Direct Shard Transfer)"]
+        NAT["🌍 AutoNAT & Circuit Relay v2"]
+    end
+
+    subgraph CORE ["Storage Engine (mesh-core)"]
+        CDC["FastCDC Dynamic Chunking"]
+        CRYPTO["Argon2id + AES-256-GCM Encryption"]
+        RS["Cauchy Reed-Solomon GF(2^8) Erasure Coder"]
+        MERKLE["Merkle DAG Cryptographic Integrity"]
+        AUDIT["Zero-Knowledge Nonce Proof-of-Storage"]
+        CREDITS["Fair-Share Reciprocity Accounting"]
+    end
+
+    subgraph STORAGE ["Local Storage Vault"]
+        VAULT["🗄️ Local Shards Directory & Manifest Storage"]
+    end
+
+    UI --> API
+    API --> AUTH
+    AUTH --> STREAM
+    STREAM --> TX
+    TX --> RX
+    RX --> SWARM
+    SWARM --- NOISE
+    SWARM --- YAMUX
+    SWARM --- KAD
+    SWARM --- GOSSIP
+    SWARM --- REQ
+    SWARM --- NAT
+    RX <--> CORE
+    REQ <--> STORAGE
+```
+
+---
+
+## Storage & Retrieval Pipeline
+
+Detailed chronological sequence of cryptographic processing, distributed transport, and self-healing reconstruction:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 👤 Client / Operator
+    participant API as 🚪 Axum HTTP Server
+    participant Core as ⚙️ mesh-core Engine
+    participant Local as 💾 Local Shard Vault
+    participant Swarm as 🌐 libp2p Network Swarm
+    participant Peer as 💻 Remote Peer Node
+
+    Note over User, Peer: FILE UPLOAD & DISTRIBUTION PIPELINE (k=data shards, m=parity shards)
+    User->>API: POST /api/v1/upload (file, passphrase, salt, k, m)
+    API->>Core: Stream bytes into FastCDC chunker (512KB min, 2MB avg, 8MB max)
+    Core->>Core: Derive encryption key via Argon2id + derive unique per-shard IV
+    Core->>Core: Encrypt chunks at rest using AES-256-GCM
+    Core->>Core: Cauchy Reed-Solomon Galois sharding into (k + m) shards
+    Core->>Core: Build SHA-256 Merkle tree & generate immutable FileManifest
+    Core->>Local: Write local shard(s) to disk vault
+    Core->>Swarm: Dispatch remote shards across connected trusted peers
+    Swarm->>Peer: ShardRequest::Store (file_id, chunk_idx, shard_idx, data)
+    Peer-->>Swarm: ShardResponse::StoreAck (success: true)
+    Swarm-->>API: All shards successfully distributed & confirmed
+    Swarm-)Peer: Gossipsub broadcast "upload_complete" event
+    API-->>User: HTTP 200 OK + FileManifest JSON
+
+    Note over User, Peer: FILE RETRIEVAL & FAULT-TOLERANT RECONSTRUCTION
+    User->>API: GET /api/v1/download/:file_id (X-Mesh-Passphrase, X-Mesh-Salt)
+    API->>Local: Read FileManifest (obtain Merkle root & shard hashes)
+    API->>Local: Load locally stored shards
+    API->>Swarm: Request remote shards from connected peers
+    Swarm->>Peer: ShardRequest::Retrieve (shard_hash)
+    Peer-->>Swarm: ShardResponse::RetrieveAck (shard_data)
+    Swarm->>Core: Supply at least k valid shards (even if m peers are down)
+    Core->>Core: Reed-Solomon reconstruct any missing shards
+    Core->>Core: Verify Merkle tree integrity against tamper attempts
+    Core->>Core: Decrypt AES-256-GCM with derived master key
+    Core-->>API: Plaintext byte stream
+    API-->>User: HTTP 200 OK (Original File Data)
+```
+
+---
+
+## Technical Stack Hierarchy
+
+Layered architectural map of all technologies, protocols, algorithms, and system integrations:
+
+```mermaid
+flowchart TB
+    subgraph L1 ["1. Application & User Interface Layer"]
+        direction LR
+        L1A["Web UI: HTML5, CSS3 Glassmorphism, QR.js, Lucide Icons"]
+        L1B["CLI: Clap v4, Tokio, Indicatif Streaming Progress"]
+        L1C["Terminal UI: Crossterm, Ratatui Live Monitoring"]
+        L1D["Android: Kotlin, Jetpack Compose, JNI Native Bridge"]
+    end
+
+    subgraph L2 ["2. Network & Transport Layer (libp2p)"]
+        direction LR
+        L2A["Transport: TCP, Noise Protocol Handshake, Yamux Multiplexing"]
+        L2B["Discovery: mDNS (Local LAN), Kademlia DHT (Global WAN)"]
+        L2C["Protocols: Request-Response (Shards), Gossipsub v1.1 Events"]
+        L2D["Traversal: AutoNAT Identification, Circuit Relay v2"]
+    end
+
+    subgraph L3 ["3. Storage & Security Engine (mesh-core)"]
+        direction LR
+        L3A["Chunking: FastCDC Rolling Hash (512KB min, 2MB avg, 8MB max)"]
+        L3B["Crypto: AES-256-GCM, Argon2id KDF, HKDF-SHA256 Derivation"]
+        L3C["Erasure Coding: Cauchy Reed-Solomon GF(2^8) Engine"]
+        L3D["Integrity: Merkle Tree (SHA-256 Root Hash Verification)"]
+    end
+
+    subgraph L4 ["4. Reliability, Economics & Governance"]
+        direction LR
+        L4A["Auditing: Zero-Knowledge Nonce Proof-of-Storage Challenges"]
+        L4B["Fair-Share Economics: 4-Tier Reciprocity Credit Ledger"]
+        L4C["Sybil Defense: /24 Subnet Density Clustering Guards"]
+        L4D["Disaster Recovery: Authenticated .mbak Poly1305 Archives"]
+    end
+
+    subgraph L5 ["5. Platform & Systems Infrastructure"]
+        direction LR
+        L5A["Core Language: Rust 1.80+ (Memory-Safe, Fearless Concurrency)"]
+        L5B["Database: PostgreSQL (ACID Control Plane, Schema Migrations)"]
+        L5C["Target OS: Windows 11/10, Linux, macOS, Android (ARM64/x86)"]
+    end
+
+    L1 --> L2
+    L2 --> L3
+    L3 --> L4
+    L4 --> L5
+```
+
+---
+
 ## Live Quick Start (Windows Launcher & Dashboard)
 
 For immediate local or LAN deployment on Windows, execute [`launch.bat`](file:///c:/Users/adity/OneDrive/Desktop/p2p%20network/launch.bat):

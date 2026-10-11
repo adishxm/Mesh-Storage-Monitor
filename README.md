@@ -8,29 +8,23 @@ A secure, decentralized, peer-to-peer storage network designed for local and glo
 
 ## Architecture Overview
 
-```
-                  ┌──────────────────────────────────────────────┐
-                  │        Web Dashboard / CLI / Terminal UI     │
-                  └──────────────────────┬───────────────────────┘
-                                         │ HTTP / REST (Loopback / Bearer Auth)
-                                         ▼
-                  ┌──────────────────────────────────────────────┐
-                  │                 Axum Router                  │
-                  │   (API v1, Auth Guard, Stream, Prometheus)   │
-                  └──────────────────────┬───────────────────────┘
-                                         │ MPSC Channel (Command/Event)
-                                         ▼
-                  ┌──────────────────────────────────────────────┐
-                  │                libp2p Swarm                  │
-                  │ (Noise, Yamux, Kademlia, Gossipsub, AutoNAT) │
-                  └──────────────────────┬───────────────────────┘
-                                         │
-                        ┌────────────────┴────────────────┐
-                        ▼                                 ▼
-           ┌─────────────────────────┐       ┌─────────────────────────┐
-           │     core :: crypto      │       │     core :: erasure     │
-           │  Argon2id + AES-256-GCM │       │  Reed-Solomon GF(2^8)   │
-           └─────────────────────────┘       └─────────────────────────┘
+```mermaid
+flowchart TD
+    UI["Web Dashboard / CLI / Terminal UI"]:::client
+    API["Axum Router<br/>(API v1, Auth Guard, Stream, Prometheus)"]:::gateway
+    SWARM["libp2p Swarm<br/>(Noise, Yamux, Kademlia, Gossipsub, AutoNAT)"]:::network
+    CRYPTO["core :: crypto<br/>Argon2id + AES-256-GCM"]:::engine
+    ERASURE["core :: erasure<br/>Reed-Solomon GF(2^8)"]:::engine
+
+    UI -->|"HTTP / REST (Loopback / Bearer Auth)"| API
+    API -->|"MPSC Channel (Command / Event)"| SWARM
+    SWARM --> CRYPTO
+    SWARM --> ERASURE
+
+    classDef client fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#ffffff
+    classDef gateway fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#ffffff
+    classDef network fill:#14532d,stroke:#22c55e,stroke-width:2px,color:#ffffff
+    classDef engine fill:#1f2937,stroke:#a855f7,stroke-width:2px,color:#ffffff
 ```
 
 ---
